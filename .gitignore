@@ -1,0 +1,39 @@
+.cache
+.vscode*
+*.kdev4
+*.pyc
+*.pyo
+*.out
+/build
+.venv/
+*.mda.tar
+
+# mesa-panvk-g57 local development
+build-bionic/
+build*/
+*.bak
+*.bak-*
+*.orig
+*.rej
+*.log
+panvk_*.txt
+*_result.txt
+*_diag.txt
+frame.png
+*.swp
+*.swo
+*~
+
+# mesa-panvk-g57 local development
+
+# PanVK G57 local build / development artifacts
+/build/
+/build-*/
+/*.bak
+/*.bak-*
+*.bak
+*.bak-*
+*.orig
+*.rej
+*.va32-probe-*
+panvk_*.txt

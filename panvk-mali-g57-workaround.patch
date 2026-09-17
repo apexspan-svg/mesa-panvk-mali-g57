@@ -1,0 +1,436 @@
+From 2fbaf409267630054e806eddd71666712a687864 Mon Sep 17 00:00:00 2001
+From: CI <ci@example.com>
+Date: Wed, 9 Sep 2026 23:48:02 +0000
+Subject: [PATCH] panvk/kbase: workaround para KBASE_IOCTL_MEM_EXEC_INIT e
+ cleanup do queue
+
+
+diff --git a/src/panfrost/lib/kmod/kbase_kmod.c b/src/panfrost/lib/kmod/kbase_kmod.c
+index 7800fb8ce75..743f547615d 100644
+--- a/src/panfrost/lib/kmod/kbase_kmod.c
++++ b/src/panfrost/lib/kmod/kbase_kmod.c
+@@ -1182,29 +1182,30 @@ kbase_kmod_dev_create(int fd, uint32_t flags,
+        .max_allocations = 255,
+       .phys_pages = 1ull << 20,
+    };
+-   if (ioctl(fd, KBASE_IOCTL_MEM_JIT_INIT, &jit_init)) {
+-      mesa_logw("kbase: KBASE_IOCTL_MEM_JIT_INIT failed: %s "
+-                "(tiler heap creation will not work)", strerror(errno));
+-   }
+-
+-   /* Initialise the EXEC_VA zone so that GPU-executable allocations
+-    * (shader BOs) are possible.  4G of executable VA (0x100000 pages)
+-    * matches what panfork uses.  On CSF uAPI >= 1.9 the zone is set up
+-    * automatically and this is a no-op.  Failure is not fatal for
+-    * enumeration, but executable allocations will fail later, so warn. */
+-   struct kbase_ioctl_mem_exec_init exec_init = { .va_pages = 0x100000 };
+-   if (ioctl(fd, KBASE_IOCTL_MEM_EXEC_INIT, &exec_init)) {
+-      mesa_logw("kbase: KBASE_IOCTL_MEM_EXEC_INIT failed: %s "
+-                "(executable BO allocation will not work)", strerror(errno));
+-   }
+-
+-   struct kbase_kmod_dev *kbase_dev =
+-      pan_kmod_alloc(allocator, sizeof(*kbase_dev));
+-   if (!kbase_dev) {
+-      mesa_loge("kbase: failed to allocate kbase_kmod_dev");
+-      free(props_buf);
+-      goto err_unmap_tracking;
+-   }
++    if (ioctl(fd, KBASE_IOCTL_MEM_JIT_INIT, &jit_init)) {
++       mesa_logw("kbase: KBASE_IOCTL_MEM_JIT_INIT failed: %s "
++                 "(tiler heap creation will not work)", strerror(errno));
++    }
++
++    struct kbase_kmod_dev *kbase_dev =
++       pan_kmod_alloc(allocator, sizeof(*kbase_dev));
++    if (!kbase_dev) {
++       mesa_loge("kbase: failed to allocate kbase_kmod_dev");
++       free(props_buf);
++       goto err_unmap_tracking;
++    }
++
++    /* Initialise the EXEC_VA zone so that GPU-executable allocations
++     * (shader BOs) are possible.  4G of executable VA (0x100000 pages)
++     * matches what panfork uses.  On CSF uAPI >= 1.9 the zone is set up
++     * automatically and this is a no-op.  Failure is not fatal for
++     * enumeration, but executable allocations will fail later, so warn. */
++    struct kbase_ioctl_mem_exec_init exec_init = { .va_pages = 0x80000 };
++    if (ioctl(fd, KBASE_IOCTL_MEM_EXEC_INIT, &exec_init)) {
++       mesa_loge("kbase: KBASE_IOCTL_MEM_EXEC_INIT failed: %s "
++                 "(executable BO allocation will not work)", strerror(errno));
++       kbase_dev->base.exec_init_failed = true;
++    }
+
+    /* Report the kernel uAPI version from the handshake (the caller can't
+     * use drmGetVersion() on a kbase fd, so drv_info is either NULL or a
+@@ -1224,11 +1225,12 @@ kbase_kmod_dev_create(int fd, uint32_t flags,
+    if (user_cache_sync && !strcmp(user_cache_sync, "0"))
+       flags |= PAN_KMOD_DEV_FLAG_MMAP_SYNC_THROUGH_KERNEL;
+
+-   pan_kmod_dev_init(&kbase_dev->base, fd, flags, &kbase_drv,
+-                     &kbase_kmod_ops, allocator);
++    pan_kmod_dev_init(&kbase_dev->base, fd, flags, &kbase_drv,
++                      &kbase_kmod_ops, allocator);
+
+-   kbase_dev->is_csf = is_csf;
+-   kbase_dev->tracking_page = tracking_page;
++    kbase_dev->base.exec_init_failed = false;
++    kbase_dev->is_csf = is_csf;
++    kbase_dev->tracking_page = tracking_page;
+    kbase_dev->next_handle = 1;
+    kbase_dev->dma_heap_fd = -1;
+    kbase_dev->kcpu.fence_fd = -1;
+@@ -1370,7 +1372,7 @@ kbase_kmod_dev_query_user_va_range(const struct pan_kmod_dev *dev)
+  * ---------------------------------------------------------------------- */
+
+ static uint64_t
+-to_kbase_mem_flags(uint32_t kmod_flags)
++to_kbase_mem_flags(struct kbase_kmod_dev *kbase_dev, uint32_t kmod_flags)
+ {
+    uint64_t flags = BASE_MEM_PROT_GPU_RD | BASE_MEM_PROT_GPU_WR |
+                     BASE_MEM_PROT_CPU_RD | BASE_MEM_PROT_CPU_WR;
+@@ -1378,17 +1380,21 @@ to_kbase_mem_flags(uint32_t kmod_flags)
+    /* Keep GPU cores coherent with each other (panfork does the same). */
+    flags |= BASE_MEM_COHERENT_LOCAL;
+
+-   if (kmod_flags & PAN_KMOD_BO_FLAG_EXECUTABLE) {
+-      /* The kernel rejects GPU_EX|GPU_WR (W^X), and executable regions
+-       * must come from the EXEC_VA zone rather than SAME_VA. */
+-      flags |= BASE_MEM_PROT_GPU_EX;
+-      flags &= ~BASE_MEM_PROT_GPU_WR;
+-   } else {
+-      /* The kernel forces SAME_VA on non-executable allocations from
+-       * 64-bit clients anyway; request it explicitly so the behavior is
+-       * uniform. */
+-      flags |= BASE_MEM_SAME_VA;
+-   }
++     if (kmod_flags & PAN_KMOD_BO_FLAG_EXECUTABLE) {
++        /* The kernel rejects GPU_EX|GPU_WR (W^X), and executable regions
++         * must come from the EXEC_VA zone rather than SAME_VA. */
++        if (!kbase_dev->base.exec_init_failed) {
++           flags |= BASE_MEM_PROT_GPU_EX;
++           flags &= ~BASE_MEM_PROT_GPU_WR;
++        } else {
++           flags |= BASE_MEM_SAME_VA;
++        }
++     } else {
++        /* The kernel forces SAME_VA on non-executable allocations from
++         * 64-bit clients anyway; request it explicitly so the behavior is
++         * uniform. */
++        flags |= BASE_MEM_SAME_VA;
++     }
+
+    if (kmod_flags & PAN_KMOD_BO_FLAG_GPU_UNCACHED)
+       flags |= BASE_MEM_UNCACHED_GPU;
+@@ -1557,7 +1563,7 @@ kbase_kmod_bo_alloc(struct pan_kmod_dev *dev,
+
+    uint64_t commit_pages = va_pages;
+    uint64_t extension = 0;
+-   uint64_t alloc_flags = to_kbase_mem_flags(kmod_flags);
++    uint64_t alloc_flags = to_kbase_mem_flags(kbase_dev, kmod_flags);
+    uint64_t alloc_gpu_va;
+
+    if (kmod_flags & PAN_KMOD_BO_FLAG_ALLOC_ON_FAULT) {
+@@ -1581,14 +1587,19 @@ kbase_kmod_bo_alloc(struct pan_kmod_dev *dev,
+          },
+       };
+
+-      if (ioctl(dev->fd, KBASE_IOCTL_MEM_ALLOC_EX, &req)) {
+-         mesa_loge("kbase: KBASE_IOCTL_MEM_ALLOC_EX failed: %s",
+-                   strerror(errno));
+-         goto err_free_bo;
+-      }
++       if (ioctl(dev->fd, KBASE_IOCTL_MEM_ALLOC_EX, &req)) {
++          mesa_loge("kbase: KBASE_IOCTL_MEM_ALLOC_EX failed: %s",
++                    strerror(errno));
++          goto err_free_bo;
++       }
+
+-      alloc_flags = req.out.flags;
+-      alloc_gpu_va = req.out.gpu_va;
++       alloc_flags = req.out.flags;
++       alloc_gpu_va = req.out.gpu_va;
++
++       if (!alloc_gpu_va) {
++          mesa_loge("kbase: KBASE_IOCTL_MEM_ALLOC_EX returned zero GPU VA");
++          goto err_free_bo;
++       }
+    } else {
+       union kbase_ioctl_mem_alloc req = {
+          .in = {
+@@ -1599,13 +1610,18 @@ kbase_kmod_bo_alloc(struct pan_kmod_dev *dev,
+          },
+       };
+
+-      if (ioctl(dev->fd, KBASE_IOCTL_MEM_ALLOC, &req)) {
+-         mesa_loge("kbase: KBASE_IOCTL_MEM_ALLOC failed: %s", strerror(errno));
+-         goto err_free_bo;
+-      }
++       if (ioctl(dev->fd, KBASE_IOCTL_MEM_ALLOC, &req)) {
++          mesa_loge("kbase: KBASE_IOCTL_MEM_ALLOC failed: %s", strerror(errno));
++          goto err_free_bo;
++       }
++
++       alloc_flags = req.out.flags;
++       alloc_gpu_va = req.out.gpu_va;
+
+-      alloc_flags = req.out.flags;
+-      alloc_gpu_va = req.out.gpu_va;
++       if (!alloc_gpu_va) {
++          mesa_loge("kbase: KBASE_IOCTL_MEM_ALLOC returned zero GPU VA");
++          goto err_free_bo;
++       }
+    }
+
+    kbase_bo->same_va = (alloc_flags & BASE_MEM_SAME_VA) != 0;
+diff --git a/src/panfrost/lib/kmod/pan_kmod.h b/src/panfrost/lib/kmod/pan_kmod.h
+index cdcaba9c5a2..b9f79973c5c 100644
+--- a/src/panfrost/lib/kmod/pan_kmod.h
++++ b/src/panfrost/lib/kmod/pan_kmod.h
+@@ -657,8 +657,11 @@ struct pan_kmod_dev {
+    /* Allocator attached to the device. */
+    const struct pan_kmod_allocator *allocator;
+
+-   /* User private data. Use pan_kmod_dev_{set,get}_user_priv() to access it. */
+-   void *user_priv;
++    /* User private data. Use pan_kmod_dev_{set,get}_user_priv() to access it. */
++    void *user_priv;
++
++    /* Set when KBASE_IOCTL_MEM_EXEC_INIT failed at device-open time. */
++    bool exec_init_failed;
+ };
+
+ #define pan_kmod_ioctl(fd, op, arg)                                          \
+diff --git a/src/panfrost/vulkan/jm/panvk_vX_gpu_queue.c b/src/panfrost/vulkan/jm/panvk_vX_gpu_queue.c
+index bc1bc0fcc75..bf83ad19066 100644
+--- a/src/panfrost/vulkan/jm/panvk_vX_gpu_queue.c
++++ b/src/panfrost/vulkan/jm/panvk_vX_gpu_queue.c
+@@ -234,6 +234,18 @@ panvk_per_arch(gpu_queue_submit)(struct vk_queue *vk_queue, struct vk_queue_subm
+    struct panvk_gpu_queue *queue = container_of(vk_queue, struct panvk_gpu_queue, vk);
+    struct panvk_device *dev = to_panvk_device(queue->vk.base.device);
+
++   if (!vk_queue || !vk_queue->base.device) {
++      mesa_loge("panvk: NULL queue or device in gpu_queue_submit");
++      return VK_ERROR_DEVICE_LOST;
++   }
++
++   if (!dev || !dev->kmod.dev) {
++      mesa_loge("panvk: submit on invalid device/queue");
++      return VK_ERROR_DEVICE_LOST;
++   }
++
++   mesa_logd("panvk: gpu_queue_submit start, cmd_count=%u", submit->command_buffer_count);
++
+    unsigned nr_semaphores = submit->wait_count + 1;
+    uint32_t semaphores[nr_semaphores];
+
+@@ -251,6 +263,9 @@ panvk_per_arch(gpu_queue_submit)(struct vk_queue *vk_queue, struct vk_queue_subm
+          container_of(submit->command_buffers[j], struct panvk_cmd_buffer, vk);
+
+       list_for_each_entry(struct panvk_batch, batch, &cmdbuf->batches, node) {
++         mesa_logd("panvk: batch submit, vtc_jc=%s frag_jc=%s",
++                   batch->vtc_jc.first_job ? "yes" : "no",
++                   batch->frag_jc.first_job ? "yes" : "no");
+          /* FIXME: should be done at the batch level */
+          unsigned nr_bos = panvk_pool_num_bos(&cmdbuf->desc_pool) +
+                            panvk_pool_num_bos(&cmdbuf->varying_pool) +
+@@ -352,7 +367,7 @@ panvk_per_arch(create_gpu_queue)(struct panvk_device *device,
+    int ret = drmSyncobjCreate(device->drm_fd, DRM_SYNCOBJ_CREATE_SIGNALED,
+                               &queue->sync);
+    if (ret) {
+-      result = panvk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
++      queue->sync = 0;
+       goto err_finish_queue;
+    }
+
+@@ -374,7 +389,8 @@ void panvk_per_arch(destroy_gpu_queue)(struct vk_queue *vk_queue)
+    struct panvk_device *dev = to_panvk_device(vk_queue->base.device);
+
+    vk_queue_finish(&queue->vk);
+-   drmSyncobjDestroy(dev->drm_fd, queue->sync);
++   if (queue->sync && dev->drm_fd >= 0)
++      drmSyncobjDestroy(dev->drm_fd, queue->sync);
+    vk_free(&dev->vk.alloc, queue);
+ }
+
+diff --git a/src/panfrost/vulkan/jm/panvk_vX_gpu_queue_kbase.c b/src/panfrost/vulkan/jm/panvk_vX_gpu_queue_kbase.c
+index 462979f416c..50f670a0db2 100644
+--- a/src/panfrost/vulkan/jm/panvk_vX_gpu_queue_kbase.c
++++ b/src/panfrost/vulkan/jm/panvk_vX_gpu_queue_kbase.c
+@@ -41,6 +41,10 @@ panvk_queue_submit_batch(struct panvk_gpu_queue *queue,
+    struct panvk_device *dev = to_panvk_device(queue->vk.base.device);
+    ASSERTED int ret;
+
++   mesa_logd("panvk: submit_batch start vtc=%s frag=%s",
++             batch->vtc_jc.first_job ? "yes" : "no",
++             batch->frag_jc.first_job ? "yes" : "no");
++
+    if (batch->issued) {
+       util_dynarray_foreach(&batch->jobs, void *, job)
+          memset((*job), 0, 4 * 4);
+@@ -63,7 +67,11 @@ panvk_queue_submit_batch(struct panvk_gpu_queue *queue,
+       };
+
+       ret = pan_kmod_ioctl(dev->kmod.dev->fd, KBASE_IOCTL_JOB_SUBMIT, &submit);
+-      assert(!ret);
++      if (ret) {
++         mesa_loge("kbase: KBASE_IOCTL_JOB_SUBMIT failed: %s", strerror(errno));
++         return;
++      }
++      mesa_logd("panvk: vtc_jc submit ok");
+
+       if (PANVK_DEBUG(TRACE) || PANVK_DEBUG(SYNC)) {
+          struct base_jd_event_v2 ev;
+@@ -85,19 +93,13 @@ panvk_queue_submit_batch(struct panvk_gpu_queue *queue,
+       };
+
+       ret = pan_kmod_ioctl(dev->kmod.dev->fd, KBASE_IOCTL_JOB_SUBMIT, &submit);
+-      assert(!ret);
+-
+-      if (PANVK_DEBUG(TRACE) || PANVK_DEBUG(SYNC)) {
+-         struct base_jd_event_v2 ev;
+-         struct pollfd pfd = { .fd = dev->kmod.dev->fd, .events = POLLIN };
+-         int pret = poll(&pfd, 1, 60000);
+-         if (pret > 0 && (pfd.revents & POLLIN))
+-            read(dev->kmod.dev->fd, &ev, sizeof(ev));
+-
+-         panvk_pool_invalidate_maps(&cmdbuf->desc_pool);
+-         pan_kmod_flush_bo_map_syncs(dev->kmod.dev);
++      if (ret) {
++         mesa_loge("kbase: KBASE_IOCTL_JOB_SUBMIT failed: %s", strerror(errno));
++         return;
+       }
++      mesa_logd("panvk: frag_jc submit ok");
+    }
+
+    batch->issued = true;
++   mesa_logd("panvk: submit_batch end");
+ }
+\ No newline at end of file
+diff --git a/src/panfrost/vulkan/panvk_physical_device.c b/src/panfrost/vulkan/panvk_physical_device.c
+index 50006dfbe7d..d7d42718f56 100644
+--- a/src/panfrost/vulkan/panvk_physical_device.c
++++ b/src/panfrost/vulkan/panvk_physical_device.c
+@@ -1012,6 +1012,7 @@ panvk_physical_device_init(struct panvk_physical_device *device,
+       }
+       break;
+
++   case 9:
+    case 10:
+    case 12:
+    case 13:
+@@ -1142,6 +1143,7 @@ panvk_physical_device_init_kbase(struct panvk_physical_device *device,
+       }
+       break;
+
++   case 9:
+    case 10:
+    case 12:
+    case 13:
+diff --git a/src/panfrost/vulkan/panvk_vX_device.c b/src/panfrost/vulkan/panvk_vX_device.c
+index f4f5c7f6504..9a210ee12b4 100644
+--- a/src/panfrost/vulkan/panvk_vX_device.c
++++ b/src/panfrost/vulkan/panvk_vX_device.c
+@@ -782,31 +782,33 @@ panvk_per_arch(destroy_device)(struct panvk_device *device,
+    vk_pipeline_cache_destroy(device->vk.mem_cache, NULL);
+    pan_kmod_bo_put(device->sparse_mem.blackhole);
+    u_printf_destroy(&device->printf.ctx);
+-   panvk_priv_bo_unref(device->printf.bo);
+-   panvk_priv_bo_unref(device->tiler_oom.handlers_bo);
+-   panvk_priv_bo_unref(device->poly_heap);
+-   panvk_priv_bo_unref(device->indirect_varying_buffer);
+-   panvk_priv_bo_unref(device->tiler_heap);
+-   panvk_priv_bo_unref(device->sample_positions);
+-   panvk_device_cleanup_mempools(device);
+-   vk_free(&device->vk.alloc, device->dump_region_size);
+-   pan_kmod_vm_destroy(device->kmod.vm);
+-   util_vma_heap_finish(&device->as.heap);
+-   if (device->as.extended_range && (device->as.priv_heap != NULL)) {
+-      util_vma_heap_finish(device->as.priv_heap);
+-      free(device->as.priv_heap);
+-      device->as.priv_heap = NULL;
+-   }
+-   if (device->as.split_heap)
+-      util_vma_heap_finish(&device->as.fixed_heap);
+-   simple_mtx_destroy(&device->as.lock);
+-
+-   if (device->debug.decode_ctx)
+-      pandecode_destroy_context(device->debug.decode_ctx);
+-
+-   pan_kmod_dev_destroy(device->kmod.dev);
+-   vk_device_finish(&device->vk);
+-   vk_free(&device->vk.alloc, device);
++    panvk_priv_bo_unref(device->printf.bo);
++    panvk_priv_bo_unref(device->tiler_oom.handlers_bo);
++    panvk_priv_bo_unref(device->poly_heap);
++    panvk_priv_bo_unref(device->indirect_varying_buffer);
++    panvk_priv_bo_unref(device->tiler_heap);
++    panvk_priv_bo_unref(device->sample_positions);
++    panvk_device_cleanup_mempools(device);
++    vk_free(&device->vk.alloc, device->dump_region_size);
++    if (device->kmod.vm)
++       pan_kmod_vm_destroy(device->kmod.vm);
++    util_vma_heap_finish(&device->as.heap);
++    if (device->as.extended_range && (device->as.priv_heap != NULL)) {
++       util_vma_heap_finish(device->as.priv_heap);
++       free(device->as.priv_heap);
++       device->as.priv_heap = NULL;
++    }
++    if (device->as.split_heap)
++       util_vma_heap_finish(&device->as.fixed_heap);
++    simple_mtx_destroy(&device->as.lock);
++
++    if (device->debug.decode_ctx)
++       pandecode_destroy_context(device->debug.decode_ctx);
++
++    if (device->kmod.dev)
++       pan_kmod_dev_destroy(device->kmod.dev);
++    vk_device_finish(&device->vk);
++    vk_free(&device->vk.alloc, device);
+ }
+
+ VKAPI_ATTR void VKAPI_CALL
+diff --git a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c
+index 36a8b06aa56..851d6b375a8 100644
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -1231,11 +1231,15 @@ panvk_shader_upload(struct panvk_device *dev,
+    shader->spd = (struct panvk_priv_mem){0};
+ #endif
+
+-   if (!shader->bin_size)
+-      return VK_SUCCESS;
+-
+-   shader->code_mem = panvk_pool_upload_aligned(
+-      &dev->mempools.exec, shader->bin_ptr, shader->bin_size, 128);
++    if (!shader->bin_size)
++       return VK_SUCCESS;
++
++    if (dev->kmod.dev && dev->kmod.dev->exec_init_failed)
++       shader->code_mem = panvk_pool_upload_aligned(
++          &dev->mempools.rw, shader->bin_ptr, shader->bin_size, 128);
++    else
++       shader->code_mem = panvk_pool_upload_aligned(
++          &dev->mempools.exec, shader->bin_ptr, shader->bin_size, 128);
+    if (!panvk_priv_mem_check_alloc(shader->code_mem))
+       return panvk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+
+@@ -2798,10 +2802,14 @@ panvk_per_arch(create_internal_shader)(
+
+    panvk_per_arch(compiler_unlock)();
+
+-   unsigned bin_size = util_dynarray_num_elements(&binary, uint8_t);
+-   if (bin_size) {
+-      shader->code_mem = panvk_pool_upload_aligned(&dev->mempools.exec,
+-                                                   binary.data, bin_size, 128);
++    unsigned bin_size = util_dynarray_num_elements(&binary, uint8_t);
++    if (bin_size) {
++       if (dev->kmod.dev && dev->kmod.dev->exec_init_failed)
++          shader->code_mem = panvk_pool_upload_aligned(&dev->mempools.rw,
++                                                       binary.data, bin_size, 128);
++       else
++          shader->code_mem = panvk_pool_upload_aligned(&dev->mempools.exec,
++                                                       binary.data, bin_size, 128);
+       if (!panvk_priv_mem_check_alloc(shader->code_mem)) {
+          result = panvk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+          goto err_free_shader;
