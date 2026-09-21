@@ -157,11 +157,7 @@ This work builds directly on top of foundational research, forks, and patches fr
 
 ---
 
-## AI Assistance Disclosure
-
-In the spirit of full transparency and openness: parts of the reverse-engineering, hardware errata workarounds, and system plumbing in this repository were developed with the assistance of AI coding tools:
-* **OpenCode (Muse Spark 1.3 High):** Assisted in diagnosing the Valhall Job Manager (JM) silent fragment wedging on multi-layer blits and reverse-engineering tilebuffer MSAA resolve-on-store descriptors via `pandecode` command stream dumps.
-* **Google Antigravity:** Assisted in developing the Termux:X11 MIT-SHM (`userbuf`) WSI swapchain bridge, build automation scripts, packaging, and benchmark verification.
+*Made with AI.*
 
 ---
 
