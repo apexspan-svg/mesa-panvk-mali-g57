@@ -142,3 +142,28 @@ Start your Termux:X11 desktop session and run:
 ```bash
 DISPLAY=:0 vkmark
 ```
+
+---
+
+## Credits & Prior Art
+
+This work builds directly on top of foundational research, forks, and patches from the open-source graphics community:
+
+* **[Mesa 3D Project](https://gitlab.freedesktop.org/mesa/mesa):** The upstream Panfrost / PanVK driver developers.
+* **[funnymdzz/mesa](https://github.com/funnymdzz/mesa):** Pioneered the initial `mali_kbase` kernel module backend and non-DRM device discovery on Android.
+* **[leegao/mesa-funnymdzz](https://github.com/leegao/mesa-funnymdzz):** "panvk-over-kbase for Winlator", solving device enumeration and `pan_kmod_dev_create_with_driver` initialization without `/dev/dri`.
+* **[mexicanbr0auth/mesa-panvk-g57](https://github.com/mexicanbr0auth/mesa-panvk-g57):** Experimental snapshot and base branch for Mali-G57 kbase/JM bringup.
+* **[wonderkast02/panvk-g720-kbase-csf](https://github.com/wonderkast02/panvk-g720-kbase-csf):** Community discussions and reverse-engineering insights on Android Mali kbase interfaces.
+
+---
+
+## AI Assistance Disclosure
+
+In the spirit of full transparency and openness: parts of the reverse-engineering, hardware errata workarounds, and system plumbing in this repository were developed with the assistance of AI coding tools:
+* **OpenCode (Muse Spark 1.3 High):** Assisted in diagnosing the Valhall Job Manager (JM) silent fragment wedging on multi-layer blits and reverse-engineering tilebuffer MSAA resolve-on-store descriptors via `pandecode` command stream dumps.
+* **Google Antigravity:** Assisted in developing the Termux:X11 MIT-SHM (`userbuf`) WSI swapchain bridge, build automation scripts, packaging, and benchmark verification.
+
+---
+
+## License
+Mesa source files retain their existing upstream licenses (MIT / X11). New modifications follow applicable Mesa licensing requirements.
