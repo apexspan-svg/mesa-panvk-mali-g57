@@ -25,11 +25,11 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
   * `vkmark 2025.01` (Hardware Mali-G57):
     * `[clear] <default>`: **119 FPS** (8.403 ms)
     * `[cube]  <default>`: **88 FPS** (11.364 ms)
-    * **vkmark Score: 103**
-  * **WebGL Aquarium (500 Fishes) in Browser:**
-    * **PanVK:** **~26 FPS**
-    * **VirGL (`virpipe`):** **~3 FPS** (~8.7x performance improvement over VirGL)
-* **3D Pipelines:** Verified with full 3D procedural terrain rendering (`test_panvk_terrain`).
+  * **WebGL Aquarium (500 Fishes at 1024x1024 Canvas):**
+    * **PanVK:** **15–25 FPS** (peak ~26 FPS, real-time interactive rendering)
+    * **VirGL (`virpipe`):** **~3 FPS** (flat-lined hard bottleneck due to socket IPC serialization)
+    * Delivers a **5x–8x real-world speedup** over VirGL.
+    * *Screenshot available in [v0.1.0-g57-alpha Release](https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/tag/v0.1.0-g57-alpha).*
 
 ---
 
