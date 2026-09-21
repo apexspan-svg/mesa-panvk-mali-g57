@@ -25,10 +25,12 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
   * `vkmark 2025.01` (Hardware Mali-G57):
     * `[clear] <default>`: **119 FPS** (8.403 ms)
     * `[cube]  <default>`: **88 FPS** (11.364 ms)
-  * **WebGL Aquarium (500 Fishes at 1024x1024 Canvas):**
-    * **PanVK:** **15–25 FPS** (peak ~26 FPS, real-time interactive rendering)
-    * **VirGL (`virpipe`):** **~3 FPS** (flat-lined hard bottleneck due to socket IPC serialization)
-    * Delivers a **5x–8x real-world speedup** over VirGL.
+  * **WebGL & Real-World Browser Graphics:**
+    * **Broad Sample Compatibility:** Verified loading and running almost all official test demos from [webglsamples.org](https://webglsamples.org/) on this device (dynamic lighting, shaders, textures, reflections, and particle systems).
+    * **WebGL Aquarium (500 Fishes at 1024x1024 Canvas):**
+      * **PanVK:** **15–25 FPS** (peak ~26 FPS, real-time interactive rendering)
+      * **VirGL (`virpipe`):** **~3 FPS** (flat-lined hard bottleneck due to socket IPC serialization)
+      * Delivers a **5x–8x real-world speedup** over VirGL.
 
 <p align="center">
   <img src="webgl_aquarium_500fish_screenshot.png" alt="WebGL Aquarium (500 Fishes) on Mali-G57 MC2 via PanVK" width="650" />
