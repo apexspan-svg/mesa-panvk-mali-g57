@@ -8,7 +8,8 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
 ---
 
 ## Target Hardware & Environment
-* **GPU:** ARM Mali-G57 MC2 (MediaTek Dimensity / Helio SoCs)
+* **SoC:** MediaTek Dimensity 6300 (MT6835)
+* **GPU:** ARM Mali-G57 MC2 (Valhall v9, GPU ID `0x90930010`)
 * **Architecture:** Valhall v9 (Job Manager / JM)
 * **Kernel Driver:** ARM `kbase` (`/dev/mali0`, uAPI JM 11.38 / 11.46)
 * **Environment:** Android / Termux
@@ -26,7 +27,7 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
     * `[clear] <default>`: **119 FPS** (8.403 ms)
     * `[cube]  <default>`: **88 FPS** (11.364 ms)
   * **WebGL & Real-World Browser Graphics:**
-    * **Broad Sample Compatibility:** Verified loading and running almost all official test demos from [webglsamples.org](https://webglsamples.org/) on this device (dynamic lighting, shaders, textures, reflections, and particle systems).
+    * **Broad Sample Compatibility:** Verified loading and running almost all official test demos from [webglsamples.org](https://webglsamples.org/) on MediaTek Dimensity 6300 (Mali-G57 MC2) (dynamic lighting, shaders, textures, reflections, and particle systems).
     * **WebGL Aquarium (500 Fishes at 1024x1024 Canvas):**
       * **PanVK:** **15–25 FPS** (peak ~26 FPS, real-time interactive rendering)
       * **VirGL (`virpipe`):** **~3 FPS** (flat-lined hard bottleneck due to socket IPC serialization)
@@ -35,7 +36,7 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
 <p align="center">
   <img src="webgl_aquarium_500fish_screenshot.png" alt="WebGL Aquarium (500 Fishes) on Mali-G57 MC2 via PanVK" width="650" />
   <br>
-  <em>Live Capture: WebGL Aquarium running inside Chromium on Termux:X11 with PanVK hardware acceleration on ARM Mali-G57 MC2.</em>
+  <em>Live Capture: WebGL Aquarium running inside Chromium on Termux:X11 with PanVK hardware acceleration on MediaTek Dimensity 6300 (ARM Mali-G57 MC2).</em>
 </p>
 
 ---
