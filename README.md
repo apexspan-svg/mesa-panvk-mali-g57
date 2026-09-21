@@ -22,10 +22,13 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
 * **Device & Queue:** Mali-G57 MC2 detection, device initialization, queue creation via `kbase` JM uAPI.
 * **WSI / Display:** Termux:X11 swapchain presentation via `userbuf` host import and MIT-SHM blit.
 * **Benchmarks:**
-  * `vkmark 2025.01` runs on hardware Mali-G57:
+  * `vkmark 2025.01` (Hardware Mali-G57):
     * `[clear] <default>`: **119 FPS** (8.403 ms)
     * `[cube]  <default>`: **88 FPS** (11.364 ms)
     * **vkmark Score: 103**
+  * **WebGL Aquarium (500 Fishes) in Browser:**
+    * **PanVK:** **~26 FPS**
+    * **VirGL (`virpipe`):** **~3 FPS** (~8.7x performance improvement over VirGL)
 * **3D Pipelines:** Verified with full 3D procedural terrain rendering (`test_panvk_terrain`).
 
 ---
