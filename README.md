@@ -29,7 +29,12 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
     * **PanVK:** **15–25 FPS** (peak ~26 FPS, real-time interactive rendering)
     * **VirGL (`virpipe`):** **~3 FPS** (flat-lined hard bottleneck due to socket IPC serialization)
     * Delivers a **5x–8x real-world speedup** over VirGL.
-    * *Screenshot available in [v0.1.0-g57-alpha Release](https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/tag/v0.1.0-g57-alpha).*
+
+<p align="center">
+  <img src="webgl_aquarium_500fish_screenshot.png" alt="WebGL Aquarium (500 Fishes) on Mali-G57 MC2 via PanVK" width="650" />
+  <br>
+  <em>Live Capture: WebGL Aquarium running inside Chromium on Termux:X11 with PanVK hardware acceleration on ARM Mali-G57 MC2.</em>
+</p>
 
 ---
 
