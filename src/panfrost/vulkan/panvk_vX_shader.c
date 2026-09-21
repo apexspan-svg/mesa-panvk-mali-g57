@@ -1051,7 +1051,7 @@ panvk_compile_nir(struct panvk_device *dev, nir_shader *nir,
                   const struct vk_graphics_pipeline_state *state,
                   const uint32_t *noperspective_varyings,
                   struct panvk_shader_desc_info *desc_info,
-                  struct panvk_shader_variant *shader)
+                   struct panvk_shader_variant *shader)
 {
    const bool dump_asm =
       shader_flags & VK_SHADER_CREATE_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_MESA;

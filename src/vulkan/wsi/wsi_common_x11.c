@@ -1788,21 +1788,23 @@ x11_present_to_x11_dri3(struct x11_swapchain *chain, uint32_t image_index,
    if (image->shm_fence)
       xshmfence_reset(image->shm_fence);
 
-   if (!chain->base.image_info.explicit_sync) {
-      ++chain->sent_image_count;
-      assert(chain->sent_image_count <= chain->base.image_count);
-   }
-
    ++chain->send_sbc;
    uint32_t serial = (uint32_t)chain->send_sbc;
 
-   assert(image->present_queued_count < ARRAY_SIZE(image->pending_completions));
-   image->pending_completions[image->present_queued_count++] =
-      (struct x11_image_pending_completion) {
-         .signal_present_id = image->present_id,
-         .serial = serial,
-         .timing_serial = image->timing_request.serial,
-      };
+   if (!chain->base.wsi->sw) {
+      if (!chain->base.image_info.explicit_sync) {
+         ++chain->sent_image_count;
+         assert(chain->sent_image_count <= chain->base.image_count);
+      }
+
+      assert(image->present_queued_count < ARRAY_SIZE(image->pending_completions));
+      image->pending_completions[image->present_queued_count++] =
+         (struct x11_image_pending_completion) {
+            .signal_present_id = image->present_id,
+            .serial = serial,
+            .timing_serial = image->timing_request.serial,
+         };
+   }
 
    xcb_void_cookie_t cookie;
 #ifdef HAVE_DRI3_EXPLICIT_SYNC
@@ -1848,6 +1850,10 @@ x11_present_to_x11_dri3(struct x11_swapchain *chain, uint32_t image_index,
    }
    xcb_discard_reply(chain->conn, cookie.sequence);
    xcb_flush(chain->conn);
+
+   if (chain->base.wsi->sw)
+      wsi_queue_push(&chain->acquire_queue, image_index);
+
    return x11_swapchain_result(chain, VK_SUCCESS);
 }
 #endif
@@ -2168,10 +2174,11 @@ x11_acquire_next_image(struct wsi_swapchain *wsi_chain,
    struct x11_swapchain *chain = (struct x11_swapchain *)wsi_chain;
    uint64_t timeout = info->timeout;
 
-   fprintf(stderr,
-           "PANVKDBG PRESENT X11_ACQUIRE_ENTER chain=%p timeout=%" PRIu64
-           " images=%u\\n",
-           (void *)chain, timeout, chain->base.image_count);
+   if (unlikely(getenv("PANVK_VERBOSE")))
+      fprintf(stderr,
+              "PANVKDBG PRESENT X11_ACQUIRE_ENTER chain=%p timeout=%" PRIu64
+              " images=%u\n",
+              (void *)chain, timeout, chain->base.image_count);
 
    /* If the swapchain is in an error state, don't go any further. */
    VkResult result = x11_swapchain_read_status_atomic(chain);
@@ -2232,11 +2239,12 @@ x11_queue_present(struct wsi_swapchain *wsi_chain,
    struct x11_swapchain *chain = (struct x11_swapchain *)wsi_chain;
    xcb_xfixes_region_t update_area = 0;
 
-   fprintf(stderr,
-           "PANVKDBG PRESENT X11_QUEUE_ENTER chain=%p image=%u "
-           "present_id=%" PRIu64 " sw=%d blit=%d\\n",
-           (void *)chain, image_index, present_id,
-           chain->base.wsi->sw, chain->base.blit.type);
+   if (unlikely(getenv("PANVK_VERBOSE")))
+      fprintf(stderr,
+              "PANVKDBG PRESENT X11_QUEUE_ENTER chain=%p image=%u "
+              "present_id=%" PRIu64 " sw=%d blit=%d\n",
+              (void *)chain, image_index, present_id,
+              chain->base.wsi->sw, chain->base.blit.type);
 
    /* If the swapchain is in an error state, don't go any further. */
    VkResult status = x11_swapchain_read_status_atomic(chain);
@@ -2568,7 +2576,7 @@ x11_manage_present_queue(void *state)
 
       /* In IMMEDIATE and MAILBOX modes, there is a risk that we have exhausted the presentation queue,
        * since IDLE could return multiple times before observing a COMPLETE. */
-      while (chain->status >= 0 &&
+      while (chain->status >= 0 && !chain->base.wsi->sw &&
              chain->images[image_index].present_queued_count ==
              ARRAY_SIZE(chain->images[image_index].pending_completions)) {
          u_cnd_monotonic_wait(&chain->thread_state_cond, &chain->thread_state_lock);
@@ -2588,8 +2596,9 @@ x11_manage_present_queue(void *state)
          break;
       }
 
-      if (present_mode == VK_PRESENT_MODE_FIFO_KHR ||
-          present_mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR) {
+      if ((present_mode == VK_PRESENT_MODE_FIFO_KHR ||
+           present_mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR) &&
+          !chain->base.wsi->sw) {
          MESA_TRACE_SCOPE("wait present");
 
          while (chain->status >= 0 && chain->images[image_index].present_queued_count != 0) {

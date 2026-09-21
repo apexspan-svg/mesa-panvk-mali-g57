@@ -88,12 +88,14 @@ panvk_AllocateMemory(VkDevice _device,
       vk_find_struct_const(pAllocateInfo->pNext,
                            IMPORT_MEMORY_HOST_POINTER_INFO_EXT);
 
-   fprintf(stderr,
-           "PANVKDBG ALLOC size=%llu type=%u host_import=%d host_ptr=%p\n",
-           (unsigned long long)pAllocateInfo->allocationSize,
-           pAllocateInfo->memoryTypeIndex,
-           host_ptr_info != NULL,
-           host_ptr_info ? host_ptr_info->pHostPointer : NULL);
+   if (unlikely(getenv("PANVK_VERBOSE"))) {
+      fprintf(stderr,
+              "PANVKDBG ALLOC size=%llu type=%u host_import=%d host_ptr=%p\n",
+              (unsigned long long)pAllocateInfo->allocationSize,
+              pAllocateInfo->memoryTypeIndex,
+              host_ptr_info != NULL,
+              host_ptr_info ? host_ptr_info->pHostPointer : NULL);
+   }
 
    const VkMemoryType *type =
       &physical_device->memory.types[pAllocateInfo->memoryTypeIndex];
@@ -134,10 +136,12 @@ panvk_AllocateMemory(VkDevice _device,
          goto err_destroy_mem;
       }
 
-      fprintf(stderr,
-              "PANVKDBG HOST_IMPORT USER_BUFFER ptr=%p size=%llu\n",
-              host_ptr_info->pHostPointer,
-              (unsigned long long)pAllocateInfo->allocationSize);
+      if (unlikely(getenv("PANVK_VERBOSE"))) {
+         fprintf(stderr,
+                 "PANVKDBG HOST_IMPORT USER_BUFFER ptr=%p size=%llu\n",
+                 host_ptr_info->pHostPointer,
+                 (unsigned long long)pAllocateInfo->allocationSize);
+      }
 
       mem->bo = kbase_kmod_import_user_buffer(
          device->kmod.dev,

@@ -178,8 +178,21 @@ render_state_set_color_attachment(struct panvk_cmd_buffer *cmdbuf,
    };
    render->fb.spill.load.rts[index] = pan_fb_load_iview(&iview->pview);
    render->fb.spill.store.rts[index] = pan_fb_store_iview(&iview->pview);
-   if (att->storeOp == VK_ATTACHMENT_STORE_OP_STORE && !ms2ss)
-      render->fb.store.rts[index] = pan_fb_store_iview(&iview->pview);
+   if (att->storeOp == VK_ATTACHMENT_STORE_OP_STORE) {
+      if (ms2ss) {
+         /* Multisampled-rasterization-to-single-sampled store: resolve
+          * the multisampled tilebuffer into the single-sampled image.
+          * Without this the store defaults to COPY_ALL, which writes
+          * back layered (unresolved) data. */
+         render->fb.store.rts[index] = (struct pan_fb_store_target) {
+            .store = true,
+            .msaa = PAN_FB_MSAA_COPY_AVERAGE,
+            .iview = &iview_ss->pview,
+         };
+      } else {
+         render->fb.store.rts[index] = pan_fb_store_iview(&iview->pview);
+      }
+   }
 
    if (att->resolveMode != VK_RESOLVE_MODE_NONE) {
       VK_FROM_HANDLE(panvk_image_view, resolve_iview, att->resolveImageView);

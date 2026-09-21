@@ -1,0 +1,8 @@
+{
+    "file_format_version": "1.0.1",
+    "ICD": {
+        "api_version": "1.3.354",
+        "library_arch": "64",
+        "library_path": "/data/data/com.termux/files/home/funnymdzz-mesa/build-bionic/src/panfrost/vulkan/libvulkan_panfrost.so"
+    }
+}

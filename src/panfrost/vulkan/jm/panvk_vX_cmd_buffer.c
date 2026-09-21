@@ -75,11 +75,13 @@ panvk_per_arch(cmd_close_batch)(struct panvk_cmd_buffer *cmdbuf)
 
    assert(batch);
 
-   fprintf(stderr, "PANVKDBG close_batch: fb=%llx vtc=%llx frag=%llx jobs=%u\n",
-           (unsigned long long)batch->fb.desc.gpu,
-           (unsigned long long)batch->vtc_jc.first_job,
-           (unsigned long long)batch->frag_jc.first_job,
-           (unsigned)util_dynarray_num_elements(&batch->jobs, void));
+   if (unlikely(getenv("PANVK_VERBOSE"))) {
+      fprintf(stderr, "PANVKDBG close_batch: fb=%llx vtc=%llx frag=%llx jobs=%u\n",
+              (unsigned long long)batch->fb.desc.gpu,
+              (unsigned long long)batch->vtc_jc.first_job,
+              (unsigned long long)batch->frag_jc.first_job,
+              (unsigned)util_dynarray_num_elements(&batch->jobs, void));
+   }
    if (!batch->fb.desc.gpu && !batch->vtc_jc.first_job) {
       if (util_dynarray_num_elements(&batch->event_ops,
                                      struct panvk_cmd_event_op) == 0) {
@@ -208,10 +210,10 @@ panvk_per_arch(cmd_close_batch)(struct panvk_cmd_buffer *cmdbuf)
                                    pan_size(ZS_CRC_EXTENSION)
                               : fbd.cpu + pan_size(FRAMEBUFFER),
          };
-tagged_fbd_ptr |= GENX(pan_emit_fb_desc)(&fbd_info, &fb_descs);
+         tagged_fbd_ptr |= GENX(pan_emit_fb_desc)(&fbd_info, &fb_descs);
 
-          {
-const uint32_t *w = (const uint32_t *)fbd.cpu;
+         if (unlikely(getenv("PANVK_VERBOSE"))) {
+              const uint32_t *w = (const uint32_t *)fbd.cpu;
               fprintf(stderr,
                       "PANVKDBG fbd l=%u w0=%08x w1=%08x w2=%08x w3=%08x "
                       "w4=%08x w5=%08x w6=%08x w7=%08x\n",
@@ -251,7 +253,7 @@ const uint32_t *w = (const uint32_t *)fbd.cpu;
                         ld->rts[rt].border_load,
                         ld->rts[rt].clear.color.ui[0], ld->rts[rt].clear.color.ui[1]);
              }
-          }
+         }
 
           result = panvk_cmd_prepare_fragment_job(cmdbuf, tagged_fbd_ptr);
          if (result != VK_SUCCESS)

@@ -1700,76 +1700,8 @@ kbase_kmod_debug_dump_native_bos(struct pan_kmod_dev *dev)
 }
 
 void
-kbase_kmod_debug_dump_user_buffers(struct pan_kmod_dev *dev)
+kbase_kmod_debug_dump_user_buffers(UNUSED struct pan_kmod_dev *dev)
 {
-   struct kbase_kmod_dev *kbase_dev =
-      container_of(dev, struct kbase_kmod_dev, base);
-
-   for (unsigned i = 0; i < kbase_dev->userbuf_count; i++) {
-      const uint8_t *cpu = kbase_dev->userbuf_cpu_ptrs[i];
-      const uint8_t *gpu = kbase_dev->userbuf_gpu_ptrs[i];
-      uint64_t size = kbase_dev->userbuf_sizes[i];
-
-      if (!cpu || !gpu || size < 16)
-         continue;
-
-      uint64_t center = 0;
-      if (size >= 640ull * 480ull * 4ull)
-         center = ((240ull * 640ull) + 320ull) * 4ull;
-
-      fprintf(stderr,
-              "PANVKDBG SHM[%u] CPU0 "
-              "%02x %02x %02x %02x "
-              "%02x %02x %02x %02x "
-              "%02x %02x %02x %02x "
-              "%02x %02x %02x %02x\n",
-              i,
-              cpu[0], cpu[1], cpu[2], cpu[3],
-              cpu[4], cpu[5], cpu[6], cpu[7],
-              cpu[8], cpu[9], cpu[10], cpu[11],
-              cpu[12], cpu[13], cpu[14], cpu[15]);
-
-      fprintf(stderr,
-              "PANVKDBG SHM[%u] GPU0 "
-              "%02x %02x %02x %02x "
-              "%02x %02x %02x %02x "
-              "%02x %02x %02x %02x "
-              "%02x %02x %02x %02x\n",
-              i,
-              gpu[0], gpu[1], gpu[2], gpu[3],
-              gpu[4], gpu[5], gpu[6], gpu[7],
-              gpu[8], gpu[9], gpu[10], gpu[11],
-              gpu[12], gpu[13], gpu[14], gpu[15]);
-
-      if (center + 16 <= size) {
-         cpu += center;
-         gpu += center;
-
-         fprintf(stderr,
-                 "PANVKDBG SHM[%u] CPUC "
-                 "%02x %02x %02x %02x "
-                 "%02x %02x %02x %02x "
-                 "%02x %02x %02x %02x "
-                 "%02x %02x %02x %02x\n",
-                 i,
-                 cpu[0], cpu[1], cpu[2], cpu[3],
-                 cpu[4], cpu[5], cpu[6], cpu[7],
-                 cpu[8], cpu[9], cpu[10], cpu[11],
-                 cpu[12], cpu[13], cpu[14], cpu[15]);
-
-         fprintf(stderr,
-                 "PANVKDBG SHM[%u] GPUC "
-                 "%02x %02x %02x %02x "
-                 "%02x %02x %02x %02x "
-                 "%02x %02x %02x %02x "
-                 "%02x %02x %02x %02x\n",
-                 i,
-                 gpu[0], gpu[1], gpu[2], gpu[3],
-                 gpu[4], gpu[5], gpu[6], gpu[7],
-                 gpu[8], gpu[9], gpu[10], gpu[11],
-                 gpu[12], gpu[13], gpu[14], gpu[15]);
-      }
-   }
 }
 
 unsigned
@@ -1939,9 +1871,9 @@ kbase_kmod_bo_alloc(struct pan_kmod_dev *dev,
    uint64_t alloc_gpu_va;
 
    if (kmod_flags & PAN_KMOD_BO_FLAG_ALLOC_ON_FAULT) {
-      /* Growable region: nothing committed up-front, grown in 2 MB
-       * increments on GPU page fault (matches panfork's heap setup). */
-      commit_pages = 0;
+      /* Growable region: pre-commit 16 MB to prevent GPF latency stalls
+       * and kbase watchdog timeouts, grown in 2 MB increments on page fault. */
+      commit_pages = MIN2(va_pages, (16 * 1024 * 1024) / page_size);
       extension = (2 * 1024 * 1024) / page_size;
    }
 
@@ -2244,9 +2176,10 @@ kbase_kmod_flush_bo_map_syncs(struct pan_kmod_dev *dev)
                     ? BASE_SYNCSET_OP_MSYNC
                     : BASE_SYNCSET_OP_CSYNC,
       };
-      fprintf(stderr, "PANVKDBG mem_sync: type=%d va=%llx start=%llx size=%llu\n",
-              (int)req.type, (unsigned long long)req.handle,
-              (unsigned long long)sync->start, (unsigned long long)sync->size);
+      if (unlikely(getenv("PANVK_VERBOSE")))
+         fprintf(stderr, "PANVKDBG mem_sync: type=%d va=%llx start=%llx size=%llu\n",
+                 (int)req.type, (unsigned long long)req.handle,
+                 (unsigned long long)sync->start, (unsigned long long)sync->size);
 
       if (pan_kmod_ioctl(dev->fd, KBASE_IOCTL_MEM_SYNC, &req)) {
          mesa_loge("kbase: KBASE_IOCTL_MEM_SYNC failed: %s", strerror(errno));

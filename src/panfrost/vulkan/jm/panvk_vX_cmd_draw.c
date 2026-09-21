@@ -1450,8 +1450,9 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_data *draw)
    const struct panvk_shader_variant *vs = panvk_shader_hw_variant(cmdbuf->state.gfx.vs.shader);
    VkResult result;
 
-   fprintf(stderr, "PANVKDBG panvk_cmd_draw: vs=%p cur_batch=%p\n",
-           (void *)vs, (void *)cmdbuf->cur_batch);
+   if (unlikely(getenv("PANVK_VERBOSE")))
+      fprintf(stderr, "PANVKDBG panvk_cmd_draw: vs=%p cur_batch=%p\n",
+              (void *)vs, (void *)cmdbuf->cur_batch);
    /* If there's no vertex shader, we can skip the draw. */
    if (!panvk_priv_mem_check_alloc(vs->rsd))
       return;
@@ -2293,6 +2294,28 @@ panvk_v9_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *info)
    cmdbuf->state.gfx.idvs.prim = info->prim;
    cmdbuf->state.gfx.idvs.restart = info->index.restart_enable;
 
+   /* Upload push descriptors before building the shader resource tables.
+    * Mesa's vk_meta framework (used e.g. by vkCmdBlitImage for ANGLE
+    * generateMipmap) binds sampler/image descriptors via
+    * VK_KHR_push_descriptor. Without this upload the resource table entry
+    * keeps GPU address 0 and the fragment stage hangs with no fault.
+    * Mirrors the PAN_ARCH >= 10 draw path. */
+   {
+      struct panvk_descriptor_state *desc_state =
+         &cmdbuf->state.gfx.desc_state;
+      uint32_t used_set_mask =
+         cmdbuf->state.gfx.vs.shader->desc_info.used_set_mask |
+         (fs ? cmdbuf->state.gfx.fs.shader->desc_info.used_set_mask : 0);
+
+      if (gfx_state_dirty(cmdbuf, DESC_STATE) || gfx_state_dirty(cmdbuf, VS) ||
+          gfx_state_dirty(cmdbuf, FS)) {
+         result = panvk_per_arch(cmd_prepare_push_descs)(cmdbuf, desc_state,
+                                                         used_set_mask);
+         if (result != VK_SUCCESS)
+            return result;
+      }
+   }
+
    result = panvk_v9_prepare_vs_desc(cmdbuf);
    if (result != VK_SUCCESS)
       return result;
@@ -2444,8 +2467,15 @@ panvk_v9_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *info)
          if (writes_point_size) {
             /* No point size array support on the v9 JM path yet. */
             cfg.fixed_sized = 1.0f;
-         } else {
+         } else if (ia->primitive_topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST ||
+                    ia->primitive_topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP) {
             cfg.fixed_sized = dyns->rs.line.width;
+         } else {
+            /* Fixed size only applies to points and lines. For triangles
+             * the dynamic line width is unrelated state that may be unset
+             * (zero); emitting zero hangs the JM fragment stage, so use
+             * the neutral value instead. */
+            cfg.fixed_sized = 1.0f;
          }
       }
 
@@ -2512,7 +2542,7 @@ panvk_v9_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *info)
                        0, 0, &job, false);
        util_dynarray_append(&batch->jobs, job.cpu);
 
-       {
+       if (unlikely(getenv("PANVK_VERBOSE"))) {
           const uint32_t *jw = (const uint32_t *)job.cpu;
           fprintf(stderr,
                   "PANVKDBG malloc l=%u w0=%08x w1=%08x w2=%08x w3=%08x "

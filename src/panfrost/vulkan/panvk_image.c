@@ -391,9 +391,9 @@ panvk_image_get_mod(struct panvk_image *image,
     * CPU/software presentation path.  Do not let modifier selection choose
     * AFBC while testing that path.
     */
-   if (iusage.wsi) {
+   if (iusage.wsi || getenv("PANVK_NO_AFBC")) {
       fprintf(stderr,
-              "PANVKDBG WSI image: forcing LINEAR modifier\n");
+              "PANVKDBG WSI/NO_AFBC image: forcing LINEAR modifier\n");
       return DRM_FORMAT_MOD_LINEAR;
    }
 

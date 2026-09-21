@@ -21,6 +21,9 @@ panvk_cmd_alloc_from_pool(struct panvk_cmd_buffer *cmdbuf,
    struct pan_ptr ptr =
       pan_pool_alloc_aligned(&pool->base, info.size, info.alignment);
 
+   if (ptr.cpu)
+      memset(ptr.cpu, 0, info.size);
+
    if (!ptr.gpu) {
       fprintf(stderr, "PANVKDBG cmd_alloc_from_pool FAILED (pool=%s, sz=%zu align=%u): %s\n",
               pool == &cmdbuf->desc_pool ? "desc" :

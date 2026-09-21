@@ -243,8 +243,48 @@ panvk_per_arch(CmdBlitImage2)(VkCommandBuffer commandBuffer,
    struct panvk_cmd_meta_graphics_save_ctx save = {0};
 
    meta_gfx_start(cmdbuf, &save);
-   vk_meta_blit_image2(&cmdbuf->vk, &dev->meta, pBlitImageInfo);
-   meta_gfx_end(cmdbuf, &save);
+#if PAN_ARCH < 10
+    /* Valhall JM workaround: a single vk_meta blit covering N array layers
+     * draws N instances selecting the layer from the instance ID, but the
+     * JM draw path also iterates the N layers, and the cross-layer
+     * primitives wedge the fragment stage with no fault. Split multi-layer
+     * blits into single-layer blits, which take the well-tested 1x1 path. */
+    {
+       uint32_t max_layers = 1;
+       for (uint32_t ri = 0; ri < pBlitImageInfo->regionCount; ri++) {
+          const VkImageBlit2 *r = &pBlitImageInfo->pRegions[ri];
+          max_layers = MAX2(max_layers, r->srcSubresource.layerCount);
+          max_layers = MAX2(max_layers, r->dstSubresource.layerCount);
+       }
+       if (max_layers > 1) {
+          VkBlitImageInfo2 info = *pBlitImageInfo;
+          VkImageBlit2 *regions = malloc(sizeof(*regions) * info.regionCount);
+          if (regions) {
+             memcpy(regions, pBlitImageInfo->pRegions,
+                    sizeof(*regions) * info.regionCount);
+             info.pRegions = regions;
+             for (uint32_t li = 0; li < max_layers; li++) {
+                for (uint32_t ri = 0; ri < info.regionCount; ri++) {
+                   if (li < pBlitImageInfo->pRegions[ri].srcSubresource.layerCount)
+                      regions[ri].srcSubresource.baseArrayLayer =
+                         pBlitImageInfo->pRegions[ri].srcSubresource.baseArrayLayer + li;
+                   regions[ri].srcSubresource.layerCount = 1;
+                   if (li < pBlitImageInfo->pRegions[ri].dstSubresource.layerCount)
+                      regions[ri].dstSubresource.baseArrayLayer =
+                         pBlitImageInfo->pRegions[ri].dstSubresource.baseArrayLayer + li;
+                   regions[ri].dstSubresource.layerCount = 1;
+                }
+                vk_meta_blit_image2(&cmdbuf->vk, &dev->meta, &info);
+             }
+             free(regions);
+             meta_gfx_end(cmdbuf, &save);
+             return;
+          }
+       }
+    }
+#endif
+    vk_meta_blit_image2(&cmdbuf->vk, &dev->meta, pBlitImageInfo);
+    meta_gfx_end(cmdbuf, &save);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -572,10 +612,11 @@ panvk_per_arch(CmdCopyImageToBuffer2)(
             .dstBuffer = pCopyImageToBufferInfo->dstBuffer,
             .regionCount = 1, .pRegions = &region,
          };
-         fprintf(stderr, "PANVKDBG COPY_RAW SRC=%016llx DST=%016llx bytes=%llu\n",
-                 (unsigned long long)alias.vk.device_address,
-                 (unsigned long long)panvk_buffer_gpu_ptr(dst, r->bufferOffset),
-                 (unsigned long long)size);
+         if (unlikely(getenv("PANVK_VERBOSE")))
+            fprintf(stderr, "PANVKDBG COPY_RAW SRC=%016llx DST=%016llx bytes=%llu\n",
+                    (unsigned long long)alias.vk.device_address,
+                    (unsigned long long)panvk_buffer_gpu_ptr(dst, r->bufferOffset),
+                    (unsigned long long)size);
          panvk_per_arch(CmdCopyBuffer2)(commandBuffer, &copy);
          vk_buffer_finish(&alias.vk);
          return;

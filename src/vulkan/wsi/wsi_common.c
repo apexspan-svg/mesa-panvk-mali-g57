@@ -2290,18 +2290,20 @@ wsi_common_acquire_next_image2(const struct wsi_device *wsi,
    VK_FROM_HANDLE(wsi_swapchain, swapchain, pAcquireInfo->swapchain);
    VK_FROM_HANDLE(vk_device, device, _device);
 
-   fprintf(stderr,
-           "PANVKDBG PRESENT ACQUIRE_ENTER swapchain=%p timeout=%" PRIu64 "\\n",
-           (void *)swapchain, pAcquireInfo->timeout);
+   if (unlikely(getenv("PANVK_VERBOSE")))
+      fprintf(stderr,
+              "PANVKDBG PRESENT ACQUIRE_ENTER swapchain=%p timeout=%" PRIu64 "\n",
+              (void *)swapchain, pAcquireInfo->timeout);
 
    VkResult result = swapchain->acquire_next_image(swapchain, pAcquireInfo,
                                                    pImageIndex);
 
-   fprintf(stderr,
-           "PANVKDBG PRESENT ACQUIRE_RET swapchain=%p result=%d index=%u\\n",
-           (void *)swapchain, result,
-           (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) ?
-              *pImageIndex : UINT32_MAX);
+   if (unlikely(getenv("PANVK_VERBOSE")))
+      fprintf(stderr,
+              "PANVKDBG PRESENT ACQUIRE_RET swapchain=%p result=%d index=%u\n",
+              (void *)swapchain, result,
+              (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) ?
+                 *pImageIndex : UINT32_MAX);
 
    if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
       return result;
@@ -2462,11 +2464,12 @@ wsi_common_queue_present(const struct wsi_device *wsi,
 {
    struct vk_device *dev = queue->base.device;
 
-   fprintf(stderr,
-           "PANVKDBG PRESENT QUEUE_ENTER queue=%p swapchainCount=%u waitCount=%u\\n",
-           (void *)queue,
-           pPresentInfo->swapchainCount,
-           pPresentInfo->waitSemaphoreCount);
+   if (unlikely(getenv("PANVK_VERBOSE")))
+      fprintf(stderr,
+              "PANVKDBG PRESENT QUEUE_ENTER queue=%p swapchainCount=%u waitCount=%u\n",
+              (void *)queue,
+              pPresentInfo->swapchainCount,
+              pPresentInfo->waitSemaphoreCount);
 
    uint32_t current_frame = p_atomic_fetch_add(&dev->current_frame, 1);
    VkResult final_result = handle_trace(queue, dev, current_frame);
@@ -2924,19 +2927,21 @@ wsi_common_queue_present(const struct wsi_device *wsi,
       if (regions && regions->pRegions)
          region = &regions->pRegions[i];
 
-      fprintf(stderr,
-              "PANVKDBG PRESENT BACKEND_ENTER i=%u swapchain=%p "
-              "image=%u present_id=%" PRIu64 "\\n",
-              i, (void *)swapchain, image_index,
-              image_signal_infos[i].present_id);
+      if (unlikely(getenv("PANVK_VERBOSE")))
+         fprintf(stderr,
+                 "PANVKDBG PRESENT BACKEND_ENTER i=%u swapchain=%p "
+                 "image=%u present_id=%" PRIu64 "\n",
+                 i, (void *)swapchain, image_index,
+                 image_signal_infos[i].present_id);
 
       results[i] = swapchain->queue_present(swapchain, image_index,
                                             image_signal_infos[i].present_id,
                                             region);
 
-      fprintf(stderr,
-              "PANVKDBG PRESENT BACKEND_RET i=%u image=%u result=%d\\n",
-              i, image_index, results[i]);
+      if (unlikely(getenv("PANVK_VERBOSE")))
+         fprintf(stderr,
+                 "PANVKDBG PRESENT BACKEND_RET i=%u image=%u result=%d\n",
+                 i, image_index, results[i]);
 
       if (results[i] != VK_SUCCESS && results[i] != VK_SUBOPTIMAL_KHR)
          continue;

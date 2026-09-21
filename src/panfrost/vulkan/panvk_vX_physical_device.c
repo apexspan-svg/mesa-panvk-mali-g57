@@ -775,7 +775,14 @@ panvk_per_arch(get_physical_device_features)(
 #endif
 
       /* VK_EXT_multisampled_render_to_single_sampled */
+#if PAN_ARCH >= 10
       .multisampledRenderToSingleSampled = true,
+#else
+      /* Valhall JM resolve-on-store for MSRS outputs black; force clients
+       * onto the explicit-resolve path until the tilebuffer MSAA handling
+       * is fixed. */
+      .multisampledRenderToSingleSampled = false,
+#endif
 
 #ifdef PANVK_USE_WSI_PLATFORM
       /* VK_EXT_present_timing */

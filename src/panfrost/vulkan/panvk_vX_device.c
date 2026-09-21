@@ -351,6 +351,12 @@ panvk_kbase_stub_queue_destroy(struct vk_queue *queue)
    vk_queue_finish(queue);
    vk_free(&vk_dev->alloc, queue);
 }
+#else
+static inline bool
+panvk_kbase_stub_queues(UNUSED const struct panvk_device *dev)
+{
+   return false;
+}
 #endif /* HAVE_PAN_KMOD_KBASE */
 
 static VkResult
