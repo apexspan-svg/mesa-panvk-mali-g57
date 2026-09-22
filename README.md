@@ -158,10 +158,12 @@ DISPLAY=:0 vkmark
 This work builds directly on top of foundational research, forks, and patches from the open-source graphics community:
 
 * **[Mesa 3D Project](https://gitlab.freedesktop.org/mesa/mesa):** The upstream Panfrost / PanVK driver developers.
+* **[LukeValen/panvk-mali-g52](https://github.com/LukeValen/panvk-mali-g52):** Key foundational roadmap, architecture investigation, and critical insights into native Termux bringup, kbase non-drm sync signaling, and raw Job Manager (JM) submission without DRM.
 * **[funnymdzz/mesa](https://github.com/funnymdzz/mesa):** Pioneered the initial `mali_kbase` kernel module backend and non-DRM device discovery on Android.
 * **[leegao/mesa-funnymdzz](https://github.com/leegao/mesa-funnymdzz):** "panvk-over-kbase for Winlator", solving device enumeration and `pan_kmod_dev_create_with_driver` initialization without `/dev/dri`.
 * **[mexicanbr0auth/mesa-panvk-g57](https://github.com/mexicanbr0auth/mesa-panvk-g57):** Experimental snapshot and base branch for Mali-G57 kbase/JM bringup.
 * **[wonderkast02/panvk-g720-kbase-csf](https://github.com/wonderkast02/panvk-g720-kbase-csf):** Community discussions and reverse-engineering insights on Android Mali kbase interfaces.
+* **Redribbon_RR (Reddit):** Active community testing, tracking, and insights across r/EmulationMediatekMali and r/EmulationOnAndroid for PanVK on Mali-G57 and Winlator.
 
 ---
 
