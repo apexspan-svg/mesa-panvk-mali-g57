@@ -39,6 +39,11 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
   <em>Live Capture: WebGL Aquarium running inside Chromium on Termux:X11 with PanVK hardware acceleration on MediaTek Dimensity 6300 (ARM Mali-G57 MC2).</em>
 </p>
 
+* **PPSSPP Homebrews (Windows ARM64 via Wine + PanVK):**
+  * **Mega Drops (2D Puzzle Game):** Runs at locked **60.0 FPS** (100% full speed).
+  * **Suicide Barbie (3D Demoparty Showcase):** Successfully rendered complex multi-pass lighting, alpha blending, and skinned 3D meshes with **zero kernel timeouts (`atom * failed = 0`)** and zero device loss across a continuous 35-minute session.
+  * *See [Setup & Configuration Notes](docs/panvk_g57/PPSSPP_AND_CHROMIUM_SETUP.md) and [Full Homebrew Playtest Report](docs/panvk_g57/PPSSPP_HOMEBREW_PLAYTEST.md).*
+
 ---
 
 ## Key Hardware Patches & Fixes
