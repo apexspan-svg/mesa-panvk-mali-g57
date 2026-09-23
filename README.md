@@ -127,12 +127,27 @@ cd panvk-mali-g57-v1.0.0-zink
 
 ---
 
-### Verify Installation
-Verify that Termux's Vulkan loader detects your Mali-G57 GPU through PanVK:
+### Verify Installation (GPU0)
+Because this build includes verbose debug logging (`PANVKDBG`), filter directly for **GPU0**:
 ```bash
-vulkaninfo --summary
+vulkaninfo | grep -A 10 "GPU0"
 ```
 *(Look for `deviceName = Mali-G57 MC2` and `driverName = panvk` under `GPU0:`)*
+
+---
+
+### Test Vulkan Performance with `vkmark`
+Verify native Vulkan hardware acceleration and FPS on Termux:X11:
+```bash
+# 1. Install vkmark
+pkg install -y vkmark
+
+# 2. Run benchmark on Termux:X11
+DISPLAY=:0 vkmark
+```
+**Expected Performance on Mali-G57 MC2:**
+* `[clear] <default>`: **~119 FPS**
+* `[cube]  <default>`: **~88 FPS**
 
 ---
 
