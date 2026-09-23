@@ -70,7 +70,33 @@ flowchart LR
   <em>Figure 2: glmark2 3D Cat model with Gouraud shading running at 59 FPS.</em>
 </p>
 
-### Test 1C: Native X11 3D Rotating Cube (OpenGL 3.2 Core)
+### Test 1C: glmark2 3D Box / Wooden Crate (Textured Cube)
+* **Scene**: `texture:model=cube:texture=crate-base:show-fps=true`
+* **Resolution**: 800 $\times$ 600 Windowed
+* **Measured Performance**: **55.0 FPS** (Average FrameTime: 18.368 ms, Score: 54)
+* **Features**: Full 3D perspective projection, UV mapped wooden planks and frame textures, bilinear filtering.
+* **Live Capture**: Bottom-left on-screen FPS counter captured at 48 FPS:
+
+<p align="center">
+  <img src="images/glmark2_zink_box_crate.png" alt="glmark2 3D Textured Crate Box" width="600" />
+  <br>
+  <em>Figure 3: glmark2 3D Textured Crate Box running via Mesa Zink at 55 FPS.</em>
+</p>
+
+### Test 1D: glmark2 3D Shaded Box (Gouraud Shading)
+* **Scene**: `shading:model=cube:shading=gouraud:show-fps=true`
+* **Resolution**: 800 $\times$ 600 Windowed
+* **Measured Performance**: **57.0 FPS** (Average FrameTime: 17.701 ms, Score: 56)
+* **Features**: Dynamic 3D lighting, vertex normals, Gouraud color interpolation across cube faces.
+* **Live Capture**: Bottom-left on-screen FPS counter captured at 58 FPS:
+
+<p align="center">
+  <img src="images/glmark2_zink_box_shading.png" alt="glmark2 3D Shaded Box" width="600" />
+  <br>
+  <em>Figure 4: glmark2 3D Shaded Box running via Mesa Zink at 57 FPS.</em>
+</p>
+
+### Test 1E: Native X11 3D Rotating Cube (OpenGL 3.2 Core)
 * **API**: Native GLX OpenGL Core 3.2
 * **Resolution**: 640 $\times$ 480 Windowed
 * **Measured Performance**: **80.00 – 83.50 FPS** (On-Screen: `FPS: 80.0 | Frame: 98`)
@@ -78,12 +104,13 @@ flowchart LR
 <p align="center">
   <img src="images/opengl_zink_cube_fps.png" alt="Native OpenGL 3.2 Core Cube" width="600" />
   <br>
-  <em>Figure 3: Native OpenGL 3.2 spinning cube running at 80.0 FPS.</em>
+  <em>Figure 5: Native OpenGL 3.2 spinning cube running at 80.0 FPS.</em>
 </p>
 
-### Test 1D: GLX Gears
+### Test 1F: GLX Gears
 * **API**: Standard GLX Gears (`glxgears`)
 * **Measured Performance**: **126.55 FPS** on Termux:X11 display `:0`.
+* **Proof Asset**: [`images/opengl_zink_glxgears.png`](images/opengl_zink_glxgears.png)
 
 ---
 
@@ -103,7 +130,7 @@ Direct3D 9 applications running inside native ARM64 Wine, translated to OpenGL v
 | :--- | :--- |
 | **Graphics API** | Direct3D 9.0c |
 | **Translation Route** | Direct3D 9 &rarr; WineD3D &rarr; Mesa Zink &rarr; PanVK Vulkan &rarr; Mali-G57 |
-| **Framerate** | **37.60 – 46.91 FPS** (On-Screen: `FPS: 37.6 | Frame: 482`) |
+| **Framerate** | **37.60 – 46.91 FPS** (On-Screen: <code>FPS: 37.6 &#124; Frame: 482</code>) |
 | **Visual Fidelity** | Depth testing, diffuse vertex shading, and dynamic rotation render cleanly. |
 
 ---
@@ -121,7 +148,7 @@ Direct3D 9 applications running inside native ARM64 Wine, translated to OpenGL v
 | :--- | :--- |
 | **Graphics API** | Direct3D 10.0 / DXGI 1.1 |
 | **Shader Model** | HLSL 4.0 (`vs_4_0` / `ps_4_0` via `d3dcompiler_47.dll`) |
-| **Measured Framerate** | **26.10 – 28.85 FPS** (On-Screen: `FPS: 26.1 | Cut Corner | Frame: 163`) |
+| **Measured Framerate** | **26.10 – 28.85 FPS** (On-Screen: <code>FPS: 26.1 &#124; Cut Corner &#124; Frame: 163</code>) |
 | **Features Verified** | DXGI swapchains, dynamic lighting, cut-corner geometry, depth testing |
 | **Stability** | Smooth presentation without GPU reset or pipeline hang (`atom * failed = 0`) |
 

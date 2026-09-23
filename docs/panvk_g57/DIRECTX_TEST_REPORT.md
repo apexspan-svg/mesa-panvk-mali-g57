@@ -16,7 +16,7 @@ This report documents the live verification and benchmarks of **Windows Direct3D
 
 ```mermaid
 flowchart TD
-    subgraph Windows ARM64 Layer (Wine)
+    subgraph WineLayer ["Windows ARM64 Layer (Wine)"]
         D3DApp["Windows Direct3D Application"]
         D3D9["Direct3D 9 Runtime (d3d9.dll)"]
         D3D10["Direct3D 10 Runtime (d3d10.dll / DXGI)"]
@@ -27,7 +27,7 @@ flowchart TD
         D3D10 --> WineD3D
     end
 
-    subgraph Native Mesa & Vulkan Layer
+    subgraph MesaLayer ["Native Mesa & Vulkan Layer"]
         GLX["GLX / libGL.so.1"]
         Zink["Mesa Zink Gallium Driver"]
         PanVK["Mesa PanVK Vulkan Driver"]
@@ -36,7 +36,7 @@ flowchart TD
         Zink --> PanVK
     end
 
-    subgraph Hardware & Kernel Layer
+    subgraph HardwareLayer ["Hardware & Kernel Layer"]
         Kbase["ARM mali_kbase (/dev/mali0)"]
         GPU["ARM Mali-G57 MC2 GPU"]
         X11["Termux:X11 Display (:0)"]
@@ -83,7 +83,7 @@ A Windows ARM64 Direct3D 9 application was executed under **Wine 11.0**. D3D9 dr
 | **Pipeline Route** | `D3D9` &rarr; `wined3d.dll` &rarr; `Mesa Zink` &rarr; `PanVK Vulkan 1.3` &rarr; `Mali-G57` |
 | **Sustained FPS** | **37.4 – 37.6 FPS** (Windowed live capture) |
 | **Peak Benchmark FPS** | **46.91 FPS** |
-| **On-Screen Telemetry** | `Direct3D 9 [PanVK + Zink] - FPS: 37.6 \| Frame: 482` |
+| **On-Screen Telemetry** | <code>Direct3D 9 [PanVK + Zink] - FPS: 37.6 &#124; Frame: 482</code> |
 | **Depth Format** | `D3DFMT_D16` hardware depth buffer enabled |
 | **Backbuffer Format** | `D3DFMT_X8R8G8B8` (Linear modifier) |
 | **Stability** | Zero crashes, accurate z-culling, smooth Euler matrix transformation |
@@ -107,7 +107,7 @@ A reproduction of the AIO Graphics Test D3D10 box was compiled for Windows ARM64
 | **DirectX API** | Direct3D 10.0 / DXGI 1.1 |
 | **Shader Model** | HLSL 4.0 runtime compilation (`vs_4_0` / `ps_4_0` via `d3dcompiler_47.dll`) |
 | **Sustained FPS** | **26.10 – 28.85 FPS** |
-| **On-Screen Telemetry** | `Direct3D 10 [PanVK] - FPS: 26.1 \| Cut Corner \| Frame: 163` |
+| **On-Screen Telemetry** | <code>Direct3D 10 [PanVK] - FPS: 26.1 &#124; Cut Corner &#124; Frame: 163</code> |
 | **Rasterizer Modes** | Counter-Clockwise Room Corner (`CULL_BACK`) & Solid Cube (`CULL_NONE`) |
 | **Depth Format** | `DXGI_FORMAT_D24_UNORM_S8_UINT` (`D3D10_COMPARISON_LESS`) |
 | **Stability** | Zero GPU hangs or kernel faults (`atom * failed = 0`) |
