@@ -96,18 +96,7 @@ flowchart LR
   <em>Figure 4: glmark2 3D Shaded Box running via Mesa Zink at 57 FPS.</em>
 </p>
 
-### Test 1E: Native X11 3D Rotating Cube (OpenGL 3.2 Core)
-* **API**: Native GLX OpenGL Core 3.2
-* **Resolution**: 640 $\times$ 480 Windowed
-* **Measured Performance**: **80.00 – 83.50 FPS** (On-Screen: `FPS: 80.0 | Frame: 98`)
-
-<p align="center">
-  <img src="images/opengl_zink_cube_fps.png" alt="Native OpenGL 3.2 Core Cube" width="600" />
-  <br>
-  <em>Figure 5: Native OpenGL 3.2 spinning cube running at 80.0 FPS.</em>
-</p>
-
-### Test 1F: GLX Gears
+### Test 1E: GLX Gears
 * **API**: Standard GLX Gears (`glxgears`)
 * **Measured Performance**: **126.55 FPS** on Termux:X11 display `:0`.
 * **Proof Asset**: [`images/opengl_zink_glxgears.png`](images/opengl_zink_glxgears.png)

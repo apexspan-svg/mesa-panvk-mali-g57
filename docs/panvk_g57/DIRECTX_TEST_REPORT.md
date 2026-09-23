@@ -120,6 +120,6 @@ A reproduction of the AIO Graphics Test D3D10 box was compiled for Windows ARM64
 | :--- | :--- | :---: | :---: |
 | **Vulkan (`vkmark`)** | Native PanVK Vulkan 1.3 | **88 – 119 FPS** | Verified |
 | **OpenGL (`glxgears`)** | `glxgears` &rarr; Mesa Zink &rarr; PanVK | **126.55 FPS** | Verified |
-| **OpenGL 3.2 (Cube)** | Native GLX &rarr; Mesa Zink &rarr; PanVK | **80.00 – 83.50 FPS** | Verified |
+| **OpenGL (`glmark2` Cat)** | `glmark2` &rarr; Mesa Zink &rarr; PanVK | **49.00 – 59.00 FPS** | Verified |
 | **Direct3D 9** | Wine `wined3d` &rarr; Mesa Zink &rarr; PanVK | **37.60 – 46.91 FPS** | Verified |
 | **Direct3D 10** | Wine D3D10 &rarr; PanVK &rarr; Termux:X11 | **26.10 – 28.85 FPS** | Verified |

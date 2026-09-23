@@ -47,7 +47,7 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
 * **Mesa Zink (OpenGL 3.2 Core over Vulkan):**
   * **glmark2 3D Cat Model (Phong Shading):** Sustained **49.0 FPS** (Score: 48, Avg FrameTime: 20.43 ms) with dynamic per-pixel lighting, specular highlights, and hardware z-buffering.
   * **glmark2 3D Cat Model (Gouraud Shading):** Sustained **59.0 FPS** (Score: 58, Avg FrameTime: 17.16 ms).
-  * **Native OpenGL 3.2 Core (Rotating Mesh):** **80.00 – 83.50 FPS** sustained (`zink Vulkan 1.3(Mali-G57 MC2 (MESA_PANVK))`).
+  * **glmark2 3D Box & Crate Demos:** **55.0 – 57.0 FPS** (UV texture mapping & dynamic shading).
   * **OpenGL Extension Suite (`glxgears`):** **126.55 FPS** on Termux:X11 display `:0`.
   * *See [Full OpenGL Zink Test Report](docs/panvk_g57/OPENGL_ZINK_TEST_REPORT.md).*
 
