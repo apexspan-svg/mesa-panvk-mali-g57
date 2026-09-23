@@ -100,30 +100,29 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
 
 Choose whichever installation method is easiest for you:
 
-### Option 1: One-Line Install via `curl` (Recommended)
-Run this single command inside Termux to automatically download, unpack, and install the latest driver:
+### Option 1: Fast Install via `curl` (Recommended)
+Copy and paste these commands into Termux:
 
 ```bash
-curl -LO https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/download/v1.0.0-zink/panvk-mali-g57-v1.0.0-zink.tar.gz && \
-tar -xzvf panvk-mali-g57-v1.0.0-zink.tar.gz && \
-cd panvk-mali-g57-v1.0.0-zink && \
-chmod +x install.sh && ./install.sh
+curl -LO https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/download/v1.0.0-zink/panvk-mali-g57-v1.0.0-zink.tar.gz
+tar -xzvf panvk-mali-g57-v1.0.0-zink.tar.gz
+cd panvk-mali-g57-v1.0.0-zink
+./install.sh
 ```
+
+*(Or as a single uninterrupted line: `curl -LO https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/download/v1.0.0-zink/panvk-mali-g57-v1.0.0-zink.tar.gz && tar -xzvf panvk-mali-g57-v1.0.0-zink.tar.gz && cd panvk-mali-g57-v1.0.0-zink && ./install.sh`)*
 
 ---
 
 ### Option 2: Direct Download via Browser
-If you downloaded `panvk-mali-g57-v1.0.0-zink.tar.gz` directly using your web browser from [Releases](https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/latest) into your phone's `Download` folder, install it with these steps in Termux:
+If you downloaded `panvk-mali-g57-v1.0.0-zink.tar.gz` through your phone browser from [Releases](https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/latest) into your `Download` folder:
 
 ```bash
-# 1. Copy the downloaded package to your Termux home directory
 cp /sdcard/Download/panvk-mali-g57-v1.0.0-zink.tar.gz ~/
 cd ~/
-
-# 2. Extract and run the installer
 tar -xzvf panvk-mali-g57-v1.0.0-zink.tar.gz
 cd panvk-mali-g57-v1.0.0-zink
-chmod +x install.sh && ./install.sh
+./install.sh
 ```
 
 ---
