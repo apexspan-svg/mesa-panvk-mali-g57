@@ -94,7 +94,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .KHR_pipeline_library = true,
       .KHR_push_descriptor = true,
       .KHR_relaxed_block_layout = true,
-      .KHR_robustness2 = PAN_ARCH >= 10,
+      .KHR_robustness2 = PAN_ARCH >= 9,
       .KHR_sampler_mirror_clamp_to_edge = true,
       .KHR_sampler_ycbcr_conversion = true,
       .KHR_separate_depth_stencil_layouts = true,
@@ -203,7 +203,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .EXT_queue_family_foreign = true,
       .EXT_rasterization_order_attachment_access = PAN_ARCH >= 10,
       .EXT_rgba10x6_formats = PAN_ARCH >= 11,
-      .EXT_robustness2 = PAN_ARCH >= 10,
+      .EXT_robustness2 = PAN_ARCH >= 9,
       .EXT_sampler_filter_minmax = PAN_ARCH >= 10,
       .EXT_scalar_block_layout = true,
       .EXT_separate_stencil_usage = true,
@@ -637,7 +637,7 @@ panvk_per_arch(get_physical_device_features)(
       /* VK_KHR_robustness2 */
       .robustBufferAccess2 = PAN_ARCH >= 11,
       .robustImageAccess2 = false,
-      .nullDescriptor = PAN_ARCH >= 10,
+      .nullDescriptor = PAN_ARCH >= 9,
 
       /* VK_EXT_shader_tile_image */
       .shaderTileImageColorReadAccess = PAN_ARCH >= 9,

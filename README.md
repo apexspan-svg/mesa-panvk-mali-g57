@@ -44,6 +44,18 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
   * **Suicide Barbie (3D Demoparty Showcase):** Successfully rendered complex multi-pass lighting, alpha blending, and skinned 3D meshes with **zero kernel timeouts (`atom * failed = 0`)** and zero device loss across a continuous 35-minute session.
   * *See [Setup & Configuration Notes](docs/panvk_g57/PPSSPP_AND_CHROMIUM_SETUP.md) and [Full Homebrew Playtest Report](docs/panvk_g57/PPSSPP_HOMEBREW_PLAYTEST.md).*
 
+* **Mesa Zink (OpenGL 3.2 Core over Vulkan) & Direct3D:**
+  * **Test 1 — Native X11 OpenGL 3.2 (Spinning Cube):** Sustained **23.4 FPS** (`zink Vulkan 1.3(Mali-G57 MC2 (MESA_PANVK))`).
+  * **Verified Pipeline:** Full GLSL core profile shaders, VBOs, depth testing, and zero kernel timeouts (`atom * failed = 0`).
+  * **Wine Direct3D (9 & 10):** Successfully ran Direct3D 9 via `wined3d` (21.0 FPS sustained) and Direct3D 10 geometry pipeline over Zink + PanVK.
+  * *See [Full OpenGL Zink & Direct3D Test Report](docs/panvk_g57/OPENGL_ZINK_TEST_REPORT.md).*
+
+<p align="center">
+  <img src="docs/panvk_g57/images/opengl_zink_cube_fps.png" alt="Test 1: OpenGL 3.2 via Mesa Zink and PanVK on Mali-G57 MC2" width="600" />
+  <br>
+  <em>Test 1 Live Capture: Native OpenGL 3.2 benchmark running via Mesa Zink on top of PanVK Vulkan at 23.4 FPS on Mali-G57 MC2 (MediaTek Dimensity 6300).</em>
+</p>
+
 ---
 
 ## Key Hardware Patches & Fixes
@@ -60,6 +72,9 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
 4. **Kbase Job Dispatch & Synchronization (`panvk_vX_gpu_queue_kbase.c`):**
    * Reworked atom completion loops, timeout handling, and memory barriers.
    * Silenced spammy per-draw memory hex dumps behind `PANVK_VERBOSE` to unlock real-time framerates.
+5. **Mesa Zink Support (`nullDescriptor` & `EXT_robustness2`) (`panvk_vX_physical_device.c`):**
+   * Lowered extension and feature exposure checks from `PAN_ARCH >= 10` to `PAN_ARCH >= 9`.
+   * Mali-G57 (Valhall v9) now advertises `VK_EXT_robustness2` and the `nullDescriptor` feature, unblocking Mesa Zink from rejecting the device and allowing desktop OpenGL 3.2+ and Direct3D translation layers to initialize.
 
 ---
 
@@ -147,8 +162,26 @@ DISPLAY=:0 ./test_panvk_terrain
 
 ## Running Benchmarks
 Start your Termux:X11 desktop session and run:
+
+### Vulkan Benchmark (`vkmark`)
 ```bash
 DISPLAY=:0 vkmark
+```
+
+### OpenGL 3.2 Benchmark via Mesa Zink
+```bash
+export DISPLAY=:0
+export WSI_X11_TERMUX=1
+export PANVK_NO_AFBC=1
+export PANVK_SPLIT_SUBMIT=1
+export GALLIUM_DRIVER=zink
+export MESA_LOADER_DRIVER_OVERRIDE=zink
+
+# Check OpenGL acceleration
+glxinfo -B | grep "OpenGL"
+
+# Run OpenGL benchmark / glmark2
+glmark2
 ```
 
 ---
