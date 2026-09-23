@@ -33,37 +33,57 @@ export MESA_LOADER_DRIVER_OVERRIDE=zink
 
 ---
 
-## Test 1: Native X11 OpenGL 3.2 via Mesa Zink + PanVK
+## Test 1: OpenGL Benchmarks via Mesa Zink + PanVK
 
-### Overview
-A native X11 OpenGL 3.2 benchmark with real-time FPS instrumentation was compiled and executed.
-
+### Pipeline Architecture
 ```mermaid
 flowchart LR
-    App["Native X11 OpenGL Application"] --> GLX["GLX / libGL.so"]
+    App["OpenGL Application (glmark2 / Native GLX)"] --> GLX["GLX / libGL.so.1"]
     GLX --> Zink["Mesa Zink (OpenGL 3.2 Core)"]
     Zink --> PanVK["PanVK (Vulkan 1.3)"]
     PanVK --> Kbase["kbase JM 11.38 (/dev/mali0)"]
     Kbase --> X11["Termux:X11 Display (:0)"]
 ```
 
-### Live Test Photo
+### Test 1A: glmark2 3D Cat Model (Phong Shading)
+* **Scene**: `shading:model=cat:shading=phong:show-fps=true`
+* **Resolution**: 800 $\times$ 600 Windowed
+* **Measured Performance**: **49.0 FPS** (Average FrameTime: 20.436 ms, Score: 48)
+* **Features**: Dynamic per-pixel lighting with specular highlights on 3D cat mesh.
+* **Live Capture**: Bottom-left on-screen FPS counter captured at 43 FPS:
 
 <p align="center">
-  <img src="images/opengl_zink_cube_fps.png" alt="OpenGL 3.2 via Mesa Zink + PanVK" width="600" />
+  <img src="images/glmark2_zink_cat_phong.png" alt="glmark2 3D Cat Model Phong Shading" width="600" />
   <br>
-  <em>Figure 1: Native OpenGL 3.2 spinning cube running via Mesa Zink + PanVK at 80.0 FPS on Termux:X11.</em>
+  <em>Figure 1: glmark2 3D Cat model with dynamic specular Phong lighting running via Mesa Zink at 49 FPS on Mali-G57 MC2.</em>
 </p>
 
-### Telemetry & Performance
-| Metric | Measured Value |
-| :--- | :--- |
-| **GL Renderer** | `zink Vulkan 1.3(Mali-G57 MC2 (MESA_PANVK))` |
-| **GL Version** | `3.2 (Compatibility Profile) Mesa 26.0.6` |
-| **Resolution** | 640x480 |
-| **Rendering Pipeline** | Core OpenGL 3.2 GLSL Shaders &rarr; Mesa Zink &rarr; NIR-to-SPIRV &rarr; PanVK &rarr; Mali-G57 |
-| **Measured Framerate** | **80.00 – 83.50 FPS** (On-Screen: `FPS: 80.0 | Frame: 98`) |
-| **Kernel Atom Stability** | Zero faults, zero timeouts (`atom * failed = 0`) |
+### Test 1B: glmark2 3D Cat Model (Gouraud Shading)
+* **Scene**: `shading:model=cat:shading=gouraud:show-fps=true`
+* **Resolution**: 800 $\times$ 600 Windowed
+* **Measured Performance**: **59.0 FPS** (Average FrameTime: 17.166 ms, Score: 58)
+* **Live Capture**: Bottom-left on-screen FPS display captured at 45 FPS during active draw calls:
+
+<p align="center">
+  <img src="images/glmark2_zink_cat.png" alt="glmark2 3D Cat Model Gouraud Shading" width="600" />
+  <br>
+  <em>Figure 2: glmark2 3D Cat model with Gouraud shading running at 59 FPS.</em>
+</p>
+
+### Test 1C: Native X11 3D Rotating Cube (OpenGL 3.2 Core)
+* **API**: Native GLX OpenGL Core 3.2
+* **Resolution**: 640 $\times$ 480 Windowed
+* **Measured Performance**: **80.00 – 83.50 FPS** (On-Screen: `FPS: 80.0 | Frame: 98`)
+
+<p align="center">
+  <img src="images/opengl_zink_cube_fps.png" alt="Native OpenGL 3.2 Core Cube" width="600" />
+  <br>
+  <em>Figure 3: Native OpenGL 3.2 spinning cube running at 80.0 FPS.</em>
+</p>
+
+### Test 1D: GLX Gears
+* **API**: Standard GLX Gears (`glxgears`)
+* **Measured Performance**: **126.55 FPS** on Termux:X11 display `:0`.
 
 ---
 
