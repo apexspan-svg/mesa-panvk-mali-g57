@@ -44,16 +44,33 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
   * **Suicide Barbie (3D Demoparty Showcase):** Successfully rendered complex multi-pass lighting, alpha blending, and skinned 3D meshes with **zero kernel timeouts (`atom * failed = 0`)** and zero device loss across a continuous 35-minute session.
   * *See [Setup & Configuration Notes](docs/panvk_g57/PPSSPP_AND_CHROMIUM_SETUP.md) and [Full Homebrew Playtest Report](docs/panvk_g57/PPSSPP_HOMEBREW_PLAYTEST.md).*
 
-* **Mesa Zink (OpenGL 3.2 Core over Vulkan) & Direct3D:**
-  * **Test 1 — Native X11 OpenGL 3.2 (Spinning Cube):** Sustained **23.4 FPS** (`zink Vulkan 1.3(Mali-G57 MC2 (MESA_PANVK))`).
+* **Mesa Zink (OpenGL 3.2 Core over Vulkan):**
+  * **Test 1 — Native X11 OpenGL 3.2 (Spinning Cube):** **80.00 – 83.50 FPS** sustained (`zink Vulkan 1.3(Mali-G57 MC2 (MESA_PANVK))`).
   * **Verified Pipeline:** Full GLSL core profile shaders, VBOs, depth testing, and zero kernel timeouts (`atom * failed = 0`).
-  * **Wine Direct3D (9 & 10):** Successfully ran Direct3D 9 via `wined3d` (21.0 FPS sustained) and Direct3D 10 geometry pipeline over Zink + PanVK.
-  * *See [Full OpenGL Zink & Direct3D Test Report](docs/panvk_g57/OPENGL_ZINK_TEST_REPORT.md).*
+  * **OpenGL Extension Suite (`glxgears`):** **126.55 FPS** on Termux:X11 display `:0`.
+  * *See [OpenGL Zink Test Report](docs/panvk_g57/OPENGL_ZINK_TEST_REPORT.md).*
 
 <p align="center">
   <img src="docs/panvk_g57/images/opengl_zink_cube_fps.png" alt="Test 1: OpenGL 3.2 via Mesa Zink and PanVK on Mali-G57 MC2" width="600" />
   <br>
-  <em>Test 1 Live Capture: Native OpenGL 3.2 benchmark running via Mesa Zink on top of PanVK Vulkan at 23.4 FPS on Mali-G57 MC2 (MediaTek Dimensity 6300).</em>
+  <em>Test 1 Live Capture: Native OpenGL 3.2 benchmark running via Mesa Zink on top of PanVK Vulkan at 80.0 FPS on Mali-G57 MC2 (MediaTek Dimensity 6300).</em>
+</p>
+
+* **DirectX Support (Direct3D 9 & 10 via Wine + Zink + PanVK):**
+  * **Direct3D 9 (`wined3d`):** **37.60 – 46.91 FPS** sustained (`FPS: 37.6 | Frame: 482`), verified hardware depth buffer (`D3DFMT_D16`) and Euler rotation.
+  * **Direct3D 10 (`d3d10.dll` / DXGI):** **26.10 – 28.85 FPS** sustained (`FPS: 26.1 | Cut Corner | Frame: 163`), verified runtime HLSL 4.0 compilation and dynamic lighting with zero driver hangs.
+  * *See [Direct3D 9 & 10 Playtest Report](docs/panvk_g57/DIRECTX_TEST_REPORT.md).*
+
+<p align="center">
+  <img src="docs/panvk_g57/images/directx9_live_panvk.png" alt="Direct3D 9 via Wine and PanVK on Mali-G57 MC2" width="600" />
+  <br>
+  <em>Live Capture: Direct3D 9 application executing in Wine via PanVK + Zink at 37.6 FPS on Mali-G57 MC2 (MediaTek Dimensity 6300).</em>
+</p>
+
+<p align="center">
+  <img src="docs/panvk_g57/images/directx10_live_panvk.png" alt="Direct3D 10 via Wine and PanVK on Mali-G57 MC2" width="600" />
+  <br>
+  <em>Live Capture: Direct3D 10 scene rendering via Wine DXGI runtime over Mesa Zink + PanVK at 26.1 FPS.</em>
 </p>
 
 ---

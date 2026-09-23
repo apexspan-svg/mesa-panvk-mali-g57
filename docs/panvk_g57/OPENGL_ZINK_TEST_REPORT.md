@@ -52,7 +52,7 @@ flowchart LR
 <p align="center">
   <img src="images/opengl_zink_cube_fps.png" alt="OpenGL 3.2 via Mesa Zink + PanVK" width="600" />
   <br>
-  <em>Figure 1: Native OpenGL 3.2 spinning cube running at 23.4 FPS on Termux:X11 with PanVK hardware acceleration.</em>
+  <em>Figure 1: Native OpenGL 3.2 spinning cube running via Mesa Zink + PanVK at 80.0 FPS on Termux:X11.</em>
 </p>
 
 ### Telemetry & Performance
@@ -62,7 +62,7 @@ flowchart LR
 | **GL Version** | `3.2 (Compatibility Profile) Mesa 26.0.6` |
 | **Resolution** | 640x480 |
 | **Rendering Pipeline** | Core OpenGL 3.2 GLSL Shaders &rarr; Mesa Zink &rarr; NIR-to-SPIRV &rarr; PanVK &rarr; Mali-G57 |
-| **Sustained Performance** | **23.4 FPS** |
+| **Measured Framerate** | **80.00 – 83.50 FPS** (On-Screen: `FPS: 80.0 | Frame: 98`) |
 | **Kernel Atom Stability** | Zero faults, zero timeouts (`atom * failed = 0`) |
 
 ---
@@ -73,9 +73,9 @@ flowchart LR
 Direct3D 9 applications running inside native ARM64 Wine, translated to OpenGL via `wined3d.dll`, and subsequently executed through Mesa Zink on top of PanVK.
 
 <p align="center">
-  <img src="images/directx9_panvk_fps.png" alt="Direct3D 9 via Wine and PanVK" width="600" />
+  <img src="images/directx9_live_panvk.png" alt="Direct3D 9 via Wine and PanVK" width="600" />
   <br>
-  <em>Figure 2: Wine Direct3D 9 spinning cube running at 21.0 FPS sustained.</em>
+  <em>Figure 2: Wine Direct3D 9 spinning mesh running at 37.6 FPS sustained.</em>
 </p>
 
 ### Telemetry & Performance
@@ -83,7 +83,7 @@ Direct3D 9 applications running inside native ARM64 Wine, translated to OpenGL v
 | :--- | :--- |
 | **Graphics API** | Direct3D 9.0c |
 | **Translation Route** | Direct3D 9 &rarr; WineD3D &rarr; Mesa Zink &rarr; PanVK Vulkan &rarr; Mali-G57 |
-| **Framerate** | **21.0 FPS** (sustained) |
+| **Framerate** | **37.60 – 46.91 FPS** (On-Screen: `FPS: 37.6 | Frame: 482`) |
 | **Visual Fidelity** | Depth testing, diffuse vertex shading, and dynamic rotation render cleanly. |
 
 ---
@@ -100,5 +100,12 @@ Direct3D 9 applications running inside native ARM64 Wine, translated to OpenGL v
 | Metric | Measured Value |
 | :--- | :--- |
 | **Graphics API** | Direct3D 10.0 / DXGI 1.1 |
-| **Features Verified** | DXGI swapchains, geometry layout, and vertex shader execution. |
-| **Stability** | Smooth presentation without GPU reset or pipeline hang. |
+| **Shader Model** | HLSL 4.0 (`vs_4_0` / `ps_4_0` via `d3dcompiler_47.dll`) |
+| **Measured Framerate** | **26.10 – 28.85 FPS** (On-Screen: `FPS: 26.1 | Cut Corner | Frame: 163`) |
+| **Features Verified** | DXGI swapchains, dynamic lighting, cut-corner geometry, depth testing |
+| **Stability** | Smooth presentation without GPU reset or pipeline hang (`atom * failed = 0`) |
+
+---
+
+*For detailed DirectX runtime architecture, Wine configuration, and additional benchmarks, see [Direct3D 9 & 10 Playtest Report](DIRECTX_TEST_REPORT.md).*
+
