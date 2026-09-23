@@ -96,7 +96,50 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
 
 ---
 
-## Building in Termux
+## Quick Installation (Prebuilt Driver)
+
+Choose whichever installation method is easiest for you:
+
+### Option 1: One-Line Install via `curl` (Recommended)
+Run this single command inside Termux to automatically download, unpack, and install the latest driver:
+
+```bash
+curl -LO https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/download/v1.0.0-zink/panvk-mali-g57-v1.0.0-zink.tar.gz && \
+tar -xzvf panvk-mali-g57-v1.0.0-zink.tar.gz && \
+cd panvk-mali-g57-v1.0.0-zink && \
+chmod +x install.sh && ./install.sh
+```
+
+---
+
+### Option 2: Direct Download via Browser
+If you downloaded `panvk-mali-g57-v1.0.0-zink.tar.gz` directly using your web browser from [Releases](https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/latest) into your phone's `Download` folder, install it with these steps in Termux:
+
+```bash
+# 1. Copy the downloaded package to your Termux home directory
+cp /sdcard/Download/panvk-mali-g57-v1.0.0-zink.tar.gz ~/
+cd ~/
+
+# 2. Extract and run the installer
+tar -xzvf panvk-mali-g57-v1.0.0-zink.tar.gz
+cd panvk-mali-g57-v1.0.0-zink
+chmod +x install.sh && ./install.sh
+```
+
+---
+
+### Verify Installation
+Verify that Termux's Vulkan loader detects your Mali-G57 GPU through PanVK:
+```bash
+vulkaninfo --summary
+```
+*(Look for `deviceName = Mali-G57 MC2` and `driverName = panvk` under `GPU0:`)*
+
+---
+
+## Building from Source (Developers)
+
+If you prefer to compile Mesa and PanVK manually from source:
 
 ### 1. Install Dependencies
 ```bash
@@ -107,7 +150,6 @@ pkg install -y git meson ninja clang python libandroid-shmem-static \
 ```
 
 ### 2. Build the Driver
-Run the build script:
 ```bash
 ./build_panvk.sh
 ```
@@ -129,29 +171,9 @@ meson setup build-bionic \
 ninja -C build-bionic src/panfrost/vulkan/libvulkan_panfrost.so
 ```
 
----
-
-## Installation & Configuration
-
-Install the ICD configuration for Termux's Vulkan loader:
+### 3. Install Built Driver
 ```bash
 ./install_panvk.sh
-```
-Or manually create `$PREFIX/share/vulkan/icd.d/panfrost_icd.aarch64.json`:
-```json
-{
-    "file_format_version": "1.0.1",
-    "ICD": {
-        "api_version": "1.3.354",
-        "library_arch": "64",
-        "library_path": "/full/path/to/build-bionic/src/panfrost/vulkan/libvulkan_panfrost.so"
-    }
-}
-```
-
-Verify the hardware driver is detected:
-```bash
-vulkaninfo --summary
 ```
 
 ---
