@@ -224,10 +224,10 @@ ninja -C build-bionic src/panfrost/vulkan/libvulkan_panfrost.so
 
 ## Standalone Tests
 
-Test programs and shaders are provided in `tests/panvk-g57/`:
+Test programs and shaders are provided in `tests/panvk-g57-async/`:
 
 ```bash
-cd tests/panvk-g57
+cd tests/panvk-g57-async
 
 # Test direct kbase kernel ioctls
 clang test_gpu_id.c -o test_gpu_id
