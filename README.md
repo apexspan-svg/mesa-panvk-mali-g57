@@ -93,10 +93,10 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
 5. **Mesa Zink Support (`nullDescriptor` & `EXT_robustness2`) (`panvk_vX_physical_device.c`):**
    * Lowered extension and feature exposure checks from `PAN_ARCH >= 10` to `PAN_ARCH >= 9`.
    * Mali-G57 (Valhall v9) now advertises `VK_EXT_robustness2` and the `nullDescriptor` feature, unblocking Mesa Zink from rejecting the device and allowing desktop OpenGL 3.2+ and Direct3D translation layers to initialize.
-6. **Batch Merging (`panvk_vX_gpu_queue_kbase.c`):**
+6. **Batch Merging (`panvk_vX_gpu_queue_kbase.c`) *(Update)*:**
    * Collapses the old one-submit-plus-CPU-wait-per-batch pattern into a single job bag per submit, cutting ~160 kernel round trips per frame.
    * Opt-in via `PANVK_MERGE_SUBMIT=1` (always on when async is enabled).
-7. **True Async Submission (`panvk_kbase_async.c`, new file):**
+7. **True Async Submission (`panvk_kbase_async.c`, new file) *(Update)*:**
    * Submit hands the job bag to the kernel and returns immediately instead of blocking until the GPU idles; completion is reaped lazily by polling the kbase event fd, with fences/semaphores resolved through `kbase_cpu_sync` armed with bag sequence numbers.
    * One bag in flight per device (per-device serialization preserves kernel execution order); opt-in via `PANVK_ASYNC=1`.
    * Lifts vkmark from ~77 (sync) / ~84 (merge only) to **94** full-suite with zero errors.
@@ -156,7 +156,7 @@ DISPLAY=:0 vkmark
 * `[clear] <default>`: **~119 FPS**
 * `[cube]  <default>`: **~88 FPS**
 
-### Async submission build (`v1.0.0-async`, vkmark 94)
+### Async submission build (`v1.0.0-async`, vkmark 94) *(Update)*
 
 A second prebuilt flavor adds batch merging + true async submission (opt-in via `PANVK_ASYNC=1`):
 
