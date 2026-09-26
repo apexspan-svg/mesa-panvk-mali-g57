@@ -125,6 +125,9 @@ panvk_per_arch(DestroyQueryPool)(VkDevice _device, VkQueryPool queryPool,
    if (!pool)
       return;
 
+   /* Async mode: query memory may still be in flight. */
+   panvk_kbase_async_drain_if_busy(device);
+
    panvk_pool_free_mem(&pool->mem);
    panvk_pool_free_mem(&pool->available_mem);
    vk_query_pool_destroy(&device->vk, pAllocator, &pool->vk);
@@ -246,6 +249,13 @@ panvk_per_arch(GetQueryPoolResults)(VkDevice _device, VkQueryPool queryPool,
 
    if (vk_device_is_lost(&device->vk))
       return VK_ERROR_DEVICE_LOST;
+
+   /* Async mode: in-flight work may not have written the results yet. A
+    * nonblocking query must report NOT_READY rather than stall. */
+   if (!(flags & VK_QUERY_RESULT_WAIT_BIT) && panvk_kbase_async_busy(device))
+      return VK_NOT_READY;
+   if (flags & VK_QUERY_RESULT_WAIT_BIT)
+      panvk_kbase_async_drain_if_busy(device);
 
    VkResult status = VK_SUCCESS;
    for (uint32_t i = 0; i < queryCount; i++) {

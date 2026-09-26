@@ -63,6 +63,7 @@ libpanvk_files = files(
   'panvk_host_copy.c',
   'panvk_image.c',
   'panvk_instance.c',
+  'panvk_kbase_async.c',
   'panvk_mempool.c',
   'panvk_nir_lower_tile_image.c',
   'panvk_physical_device.c',

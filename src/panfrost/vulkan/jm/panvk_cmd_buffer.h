@@ -83,6 +83,10 @@ struct panvk_cmd_buffer {
    struct list_head push_sets;
    struct panvk_batch *cur_batch;
 
+   /* Sequence number of the last async submission using this command
+    * buffer (0 = none). Reset/destroy wait for it. */
+   uint64_t async_seqno;
+
    struct {
       struct panvk_cmd_graphics_state gfx;
       struct panvk_cmd_compute_state compute;

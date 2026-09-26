@@ -309,6 +309,9 @@ panvk_FreeMemory(VkDevice _device, VkDeviceMemory _mem,
    if (mem == NULL)
       return;
 
+   /* Async mode: the memory may still be in flight. */
+   panvk_kbase_async_drain_if_busy(device);
+
    struct panvk_physical_device *physical_device =
       to_panvk_physical_device(device->vk.physical);
 
