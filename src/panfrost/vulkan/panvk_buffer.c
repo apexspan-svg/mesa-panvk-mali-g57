@@ -183,6 +183,9 @@ panvk_DestroyBuffer(VkDevice _device, VkBuffer _buffer,
    if (!buffer)
       return;
 
+   /* Async mode: the buffer's memory may still be in flight. */
+   panvk_kbase_async_drain_if_busy(device);
+
    if (buffer->vk.create_flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) {
       uint64_t va_range = panvk_buffer_get_sparse_size(buffer);
 

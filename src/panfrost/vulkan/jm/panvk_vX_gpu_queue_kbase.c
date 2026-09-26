@@ -102,6 +102,17 @@ struct base_jd_atom_v2 {
    uint8_t payload[16]; /* padding to 64 bytes */
 } __attribute__((packed, aligned(16)));
 
+/* Per-batch state prepared for submission: everything up to (but excluding)
+ * the submit+wait itself, so one job bag can cover many batches. */
+struct panvk_kbase_jm_prepared_batch {
+   struct panvk_cmd_buffer *cmdbuf;
+   struct panvk_batch *batch;
+   uint32_t vtc_core;
+   uint32_t frag_core;
+   struct base_external_resource extres[BASE_EXT_RES_COUNT_MAX];
+   unsigned nr_extres;
+};
+
 static VkResult
 panvk_kbase_wait_jobs(struct panvk_device *dev,
                      const struct base_jd_atom_v2 *atoms, unsigned count)
@@ -161,23 +172,31 @@ panvk_kbase_wait_jobs(struct panvk_device *dev,
 }
 
 static VkResult
-panvk_kbase_jm_submit_batch(struct panvk_gpu_queue *queue,
-                            struct panvk_cmd_buffer *cmdbuf,
-                            struct panvk_batch *batch, uint32_t *bos,
-                            unsigned nr_bos, uint32_t *in_fences,
-                            unsigned nr_in_fences)
+panvk_kbase_jm_prepare_batch(struct panvk_gpu_queue *queue,
+                             struct panvk_cmd_buffer *cmdbuf,
+                             struct panvk_batch *batch,
+                             struct panvk_kbase_jm_prepared_batch *prep)
 {
    struct panvk_device *dev = to_panvk_device(queue->vk.base.device);
-   ASSERTED int ret;
 
    if (unlikely(getenv("PANVK_VERBOSE")))
-      fprintf(stderr, "PANVKDBG submit_batch kbase: batch=%p vtc=%s frag=%s bos=%u\n",
+      fprintf(stderr, "PANVKDBG submit_batch kbase: batch=%p vtc=%s frag=%s\n",
               (void *)batch,
               batch->vtc_jc.first_job ? "Y" : "N",
-              batch->frag_jc.first_job ? "Y" : "N", nr_bos);
+              batch->frag_jc.first_job ? "Y" : "N");
    mesa_logd("panvk: submit_batch start vtc=%s frag=%s",
              batch->vtc_jc.first_job ? "yes" : "no",
              batch->frag_jc.first_job ? "yes" : "no");
+
+   if (batch->issued && panvk_kbase_async_is_enabled(dev) &&
+       cmdbuf->async_seqno) {
+      /* Re-submitting a batch whose previous execution may still be in
+       * flight: wait for it before touching job memory. */
+      VkResult wres = panvk_kbase_async_wait_seqno(
+         dev, cmdbuf->async_seqno, UINT64_MAX);
+      if (wres != VK_SUCCESS)
+         return wres;
+   }
 
    if (batch->issued) {
       /*
@@ -478,6 +497,28 @@ panvk_kbase_jm_submit_batch(struct panvk_gpu_queue *queue,
                  (unsigned long long)extres[i].ext_resource);
    }
 
+   prep->cmdbuf = cmdbuf;
+   prep->batch = batch;
+   prep->vtc_core = vtc_core;
+   prep->frag_core = frag_core;
+   prep->nr_extres = nr_extres;
+   memcpy(prep->extres, extres, sizeof(prep->extres));
+
+   return VK_SUCCESS;
+}
+
+/* Submit one prepared batch exactly like the historical per-batch path
+ * (split or joint). Used when batch merging is disabled. */
+static VkResult
+panvk_kbase_jm_submit_prepared(struct panvk_device *dev,
+                               const struct panvk_kbase_jm_prepared_batch *prep)
+{
+   struct panvk_cmd_buffer *cmdbuf = prep->cmdbuf;
+   struct panvk_batch *batch = prep->batch;
+   uint32_t vtc_core = prep->vtc_core;
+   uint32_t frag_core = prep->frag_core;
+   ASSERTED int ret;
+
    bool use_split = (getenv("PANVK_SPLIT_SUBMIT") ||
                      getenv("PANVK_SPLIT_MASK") ||
 #if PAN_ARCH >= 9
@@ -495,9 +536,9 @@ panvk_kbase_jm_submit_batch(struct panvk_gpu_queue *queue,
          .atom_number = 1,
          .core_req = vtc_core,
       };
-      if (nr_extres) {
-         vatom.extres_list = (uint64_t)(uintptr_t)extres;
-         vatom.nr_extres = nr_extres;
+      if (prep->nr_extres) {
+         vatom.extres_list = (uint64_t)(uintptr_t)prep->extres;
+         vatom.nr_extres = prep->nr_extres;
          vatom.core_req |= BASE_JD_REQ_EXTERNAL_RESOURCES;
       }
       struct kbase_ioctl_job_submit vsub = {
@@ -539,9 +580,9 @@ panvk_kbase_jm_submit_batch(struct panvk_gpu_queue *queue,
          .atom_number = 2,
          .core_req = frag_core,
       };
-      if (nr_extres) {
-         fatom.extres_list = (uint64_t)(uintptr_t)extres;
-         fatom.nr_extres = nr_extres;
+      if (prep->nr_extres) {
+         fatom.extres_list = (uint64_t)(uintptr_t)prep->extres;
+         fatom.nr_extres = prep->nr_extres;
          fatom.core_req |= BASE_JD_REQ_EXTERNAL_RESOURCES;
       }
       struct kbase_ioctl_job_submit fsub = {
@@ -578,10 +619,10 @@ panvk_kbase_jm_submit_batch(struct panvk_gpu_queue *queue,
                     f[40], f[41], f[42], f[43], f[44], f[45], f[46], f[47]);
          }
          fprintf(stderr, "PANVKDBG split failed info: nr_extres=%u fatom_core_req=%08x\n",
-                 nr_extres, fatom.core_req);
-         for (unsigned i = 0; i < nr_extres; i++) {
+                 prep->nr_extres, fatom.core_req);
+         for (unsigned i = 0; i < prep->nr_extres; i++) {
             fprintf(stderr, "PANVKDBG split failed extres[%u]=%016llx\n",
-                    i, (unsigned long long)extres[i].ext_resource);
+                    i, (unsigned long long)prep->extres[i].ext_resource);
          }
          if (dev->debug.decode_ctx) {
             if (batch->vtc_jc.first_job)
@@ -634,18 +675,18 @@ panvk_kbase_jm_submit_batch(struct panvk_gpu_queue *queue,
          atoms[nr_atoms].atom_number = 1;
          atoms[nr_atoms].core_req = vtc_core;
 
-         if (nr_extres) {
+         if (prep->nr_extres) {
             atoms[nr_atoms].extres_list =
-               (uint64_t)(uintptr_t)extres;
-            atoms[nr_atoms].nr_extres = nr_extres;
+               (uint64_t)(uintptr_t)prep->extres;
+            atoms[nr_atoms].nr_extres = prep->nr_extres;
             atoms[nr_atoms].core_req |= BASE_JD_REQ_EXTERNAL_RESOURCES;
 
             if (unlikely(getenv("PANVK_VERBOSE")))
                fprintf(stderr,
                        "PANVKDBG VTC EXTRES count=%u core_req=%08x list=%p\n",
-                       nr_extres,
+                       prep->nr_extres,
                        atoms[nr_atoms].core_req,
-                       (void *)extres);
+                       (void *)prep->extres);
          }
 
          nr_atoms++;
@@ -660,18 +701,18 @@ panvk_kbase_jm_submit_batch(struct panvk_gpu_queue *queue,
          }
          atoms[nr_atoms].core_req = frag_core;
 
-         if (nr_extres) {
+         if (prep->nr_extres) {
             atoms[nr_atoms].extres_list =
-               (uint64_t)(uintptr_t)extres;
-            atoms[nr_atoms].nr_extres = nr_extres;
+               (uint64_t)(uintptr_t)prep->extres;
+            atoms[nr_atoms].nr_extres = prep->nr_extres;
             atoms[nr_atoms].core_req |= BASE_JD_REQ_EXTERNAL_RESOURCES;
 
             if (unlikely(getenv("PANVK_VERBOSE")))
                fprintf(stderr,
                        "PANVKDBG FRAG EXTRES count=%u core_req=%08x list=%p\n",
-                       nr_extres,
+                       prep->nr_extres,
                        atoms[nr_atoms].core_req,
-                       (void *)extres);
+                       (void *)prep->extres);
          }
 
          nr_atoms++;
@@ -787,8 +828,224 @@ panvk_kbase_jm_submit_batch(struct panvk_gpu_queue *queue,
       }
    }
 
-   batch->issued = true;
-   mesa_logd("panvk: submit_batch end");
+    batch->issued = true;
+    mesa_logd("panvk: submit_batch end");
+    return VK_SUCCESS;
+}
+
+static VkResult
+panvk_kbase_jm_submit_batch(struct panvk_gpu_queue *queue,
+                            struct panvk_cmd_buffer *cmdbuf,
+                            struct panvk_batch *batch, uint32_t *bos,
+                            unsigned nr_bos, uint32_t *in_fences,
+                            unsigned nr_in_fences)
+{
+   struct panvk_device *dev = to_panvk_device(queue->vk.base.device);
+   struct panvk_kbase_jm_prepared_batch prep;
+   VkResult result;
+
+   (void)bos;
+   (void)nr_bos;
+   (void)in_fences;
+   (void)nr_in_fences;
+
+   result = panvk_kbase_jm_prepare_batch(queue, cmdbuf, batch, &prep);
+   if (result != VK_SUCCESS)
+      return result;
+
+   return panvk_kbase_jm_submit_prepared(dev, &prep);
+}
+
+/* Maximum batches merged into one job bag. Each batch contributes up to two
+ * atoms; atom numbers are bytes and the wait path tracks 256 of them. */
+#define PANVK_KBASE_JM_MERGE_MAX_BATCHES 120
+
+/* Submit many prepared batches as a single kbase job bag with a linear
+ * dependency chain (each atom depends on the previous one), then wait once.
+ * This preserves the exact execution order of per-batch submits while
+ * collapsing N submit+wait round trips into one. Lifetimes are unchanged:
+ * everything is still waited on before returning. */
+static VkResult
+panvk_kbase_jm_submit_merged(struct panvk_device *dev,
+                             struct vk_queue *vk_queue,
+                             struct panvk_kbase_jm_prepared_batch *preps,
+                             unsigned nr_preps)
+{
+   struct base_jd_atom_v2 *atoms =
+      malloc(sizeof(*atoms) * 2 * nr_preps);
+   struct panvk_batch **atom_batch =
+      malloc(sizeof(*atom_batch) * 2 * nr_preps);
+   if (!atoms || !atom_batch) {
+      free(atoms);
+      free(atom_batch);
+      return vk_queue_set_lost(vk_queue, "kbase JM merged submit OOM");
+   }
+
+   unsigned nr_atoms = 0;
+   uint8_t prev_atom = 0;
+   for (unsigned b = 0; b < nr_preps; b++) {
+      struct panvk_batch *batch = preps[b].batch;
+
+      if (batch->vtc_jc.first_job) {
+         struct base_jd_atom_v2 *a = &atoms[nr_atoms];
+         memset(a, 0, sizeof(*a));
+         a->jc = batch->vtc_jc.first_job;
+         a->atom_number = nr_atoms + 1;
+         a->core_req = preps[b].vtc_core;
+         if (prev_atom) {
+            a->pre_dep[0].atom_id = prev_atom;
+            a->pre_dep[0].dependency_type = 1; /* DATA */
+         }
+         if (preps[b].nr_extres) {
+            a->extres_list = (uint64_t)(uintptr_t)preps[b].extres;
+            a->nr_extres = preps[b].nr_extres;
+            a->core_req |= BASE_JD_REQ_EXTERNAL_RESOURCES;
+         }
+         atom_batch[nr_atoms] = batch;
+         prev_atom = a->atom_number;
+         nr_atoms++;
+      }
+
+      if (batch->frag_jc.first_job) {
+         struct base_jd_atom_v2 *a = &atoms[nr_atoms];
+         memset(a, 0, sizeof(*a));
+         a->jc = batch->frag_jc.first_job;
+         a->atom_number = nr_atoms + 1;
+         a->core_req = preps[b].frag_core;
+         if (prev_atom) {
+            a->pre_dep[0].atom_id = prev_atom;
+            a->pre_dep[0].dependency_type = 1; /* DATA */
+         }
+         if (preps[b].nr_extres) {
+            a->extres_list = (uint64_t)(uintptr_t)preps[b].extres;
+            a->nr_extres = preps[b].nr_extres;
+            a->core_req |= BASE_JD_REQ_EXTERNAL_RESOURCES;
+         }
+         atom_batch[nr_atoms] = batch;
+         prev_atom = a->atom_number;
+         nr_atoms++;
+      }
+   }
+
+   VkResult result = VK_SUCCESS;
+   if (nr_atoms) {
+      struct kbase_ioctl_job_submit submit = {
+         .addr = (uint64_t)(uintptr_t)atoms,
+         .nr_atoms = nr_atoms,
+         .stride = sizeof(atoms[0]),
+      };
+
+      if (unlikely(getenv("PANVK_VERBOSE")))
+         fprintf(stderr, "PANVKDBG merged submit: batches=%u atoms=%u\n",
+                 nr_preps, nr_atoms);
+
+      int ret = pan_kmod_ioctl(dev->kmod.dev->fd, KBASE_IOCTL_JOB_SUBMIT,
+                               &submit);
+      if (ret) {
+         mesa_loge("kbase: merged KBASE_IOCTL_JOB_SUBMIT failed: %s",
+                   strerror(errno));
+         result = VK_ERROR_DEVICE_LOST;
+      } else {
+         result = panvk_kbase_wait_jobs(dev, atoms, nr_atoms);
+      }
+
+      if (result != VK_SUCCESS) {
+         /* Identify the culprit batch by GPU-written job status. */
+         for (unsigned b = 0; b < nr_preps; b++) {
+            struct panvk_batch *batch = preps[b].batch;
+            util_dynarray_foreach(&batch->jobs, void *, job) {
+               const uint32_t *h = *job;
+               fprintf(stderr,
+                       "PANVKDBG merged failed batch=%p job: status=%08x task=%08x "
+                       "fault=%08x%08x type_index=%08x\n",
+                       (void *)batch, h[0], h[1], h[3], h[2], h[4]);
+            }
+         }
+      }
+   }
+
+   free(atoms);
+   free(atom_batch);
+
+   if (result != VK_SUCCESS)
+      return vk_queue_set_lost(vk_queue, "kbase JM merged submission failed");
+
+    for (unsigned b = 0; b < nr_preps; b++)
+       preps[b].batch->issued = true;
+
+    return VK_SUCCESS;
+}
+
+/* Build a single linear-chain job bag from prepared batches for async
+ * submission. Atoms and the flat extres array are heap-allocated; ownership
+ * of both passes to the caller (handed to the async engine, freed on
+ * retirement). Every atom depends on the previous one, preserving submit
+ * order exactly. */
+static VkResult
+panvk_kbase_jm_build_async_bag(struct panvk_kbase_jm_prepared_batch *preps,
+                               unsigned nr_preps,
+                               struct base_jd_atom_v2 **atoms_out,
+                               void **extres_blob_out,
+                               unsigned *nr_atoms_out)
+{
+   struct base_jd_atom_v2 *atoms =
+      calloc(2 * nr_preps, sizeof(*atoms));
+   struct base_external_resource (*extres)[BASE_EXT_RES_COUNT_MAX] =
+      malloc(sizeof(*extres) * nr_preps);
+   if (!atoms || !extres) {
+      free(atoms);
+      free(extres);
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+   }
+
+   unsigned nr_atoms = 0;
+   uint8_t prev_atom = 0;
+   for (unsigned b = 0; b < nr_preps; b++) {
+      struct panvk_batch *batch = preps[b].batch;
+      memcpy(extres[b], preps[b].extres, sizeof(extres[b]));
+
+      if (batch->vtc_jc.first_job) {
+         struct base_jd_atom_v2 *a = &atoms[nr_atoms];
+         memset(a, 0, sizeof(*a));
+         a->jc = batch->vtc_jc.first_job;
+         a->atom_number = nr_atoms + 1;
+         a->core_req = preps[b].vtc_core;
+         if (prev_atom) {
+            a->pre_dep[0].atom_id = prev_atom;
+            a->pre_dep[0].dependency_type = 1; /* DATA */
+         }
+         if (preps[b].nr_extres) {
+            a->extres_list = (uint64_t)(uintptr_t)&extres[b][0];
+            a->nr_extres = preps[b].nr_extres;
+            a->core_req |= BASE_JD_REQ_EXTERNAL_RESOURCES;
+         }
+         prev_atom = a->atom_number;
+         nr_atoms++;
+      }
+
+      if (batch->frag_jc.first_job) {
+         struct base_jd_atom_v2 *a = &atoms[nr_atoms];
+         memset(a, 0, sizeof(*a));
+         a->jc = batch->frag_jc.first_job;
+         a->atom_number = nr_atoms + 1;
+         a->core_req = preps[b].frag_core;
+         if (prev_atom) {
+            a->pre_dep[0].atom_id = prev_atom;
+            a->pre_dep[0].dependency_type = 1; /* DATA */
+         }
+         if (preps[b].nr_extres) {
+            a->extres_list = (uint64_t)(uintptr_t)&extres[b][0];
+            a->nr_extres = preps[b].nr_extres;
+            a->core_req |= BASE_JD_REQ_EXTERNAL_RESOURCES;
+         }
+         prev_atom = a->atom_number;
+         nr_atoms++;
+      }
+   }
+
+   *atoms_out = atoms;
+   *extres_blob_out = extres;
+   *nr_atoms_out = nr_atoms;
    return VK_SUCCESS;
 }
 
@@ -799,6 +1056,8 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
                                 struct vk_queue_submit *submit)
 {
    uint64_t targets[PANVK_KBASE_SYNC_TARGET_COUNT] = {};
+   uint64_t async_seqno = 0;
+   const bool want_async = panvk_kbase_async_is_enabled(dev);
 
    if (unlikely(getenv("PANVK_VERBOSE")))
       fprintf(stderr, "PANVKDBG kbase submit: wait=%u signal=%u cmdbuf=%u\n",
@@ -817,33 +1076,125 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
          return result;
    }
 
-   pan_kmod_flush_bo_map_syncs(dev->kmod.dev);
+    pan_kmod_flush_bo_map_syncs(dev->kmod.dev);
 
-   for (uint32_t j = 0; j < submit->command_buffer_count; ++j) {
-      struct panvk_cmd_buffer *cmdbuf =
-         container_of(submit->command_buffers[j], struct panvk_cmd_buffer, vk);
+     if (want_async || getenv("PANVK_MERGE_SUBMIT")) {
+       /* Merged path: prepare every batch, then submit each chunk of
+        * batches as a single job bag. With PANVK_ASYNC=1 the bag is
+        * submitted without waiting (true async); with PANVK_MERGE_SUBMIT=1
+        * each bag is still waited on (fewer round trips, same ordering).
+        * Falls back to per-batch submits below. */
+       unsigned total = 0;
+       for (uint32_t j = 0; j < submit->command_buffer_count; ++j) {
+          struct panvk_cmd_buffer *cmdbuf =
+             container_of(submit->command_buffers[j], struct panvk_cmd_buffer, vk);
+          list_for_each_entry(struct panvk_batch, batch, &cmdbuf->batches, node)
+             total++;
+       }
 
-      unsigned nb = 0;
-      list_for_each_entry(struct panvk_batch, batch, &cmdbuf->batches, node)
-         nb++;
-      if (unlikely(getenv("PANVK_VERBOSE")))
-         fprintf(stderr, "PANVKDBG kbase submit cmdbuf[%u]: batches=%u\n", j, nb);
+       struct panvk_kbase_jm_prepared_batch *preps =
+          malloc(sizeof(*preps) * (total ? total : 1));
+       if (!preps)
+          return vk_queue_set_lost(vk_queue, "kbase JM merge OOM");
 
-      list_for_each_entry(struct panvk_batch, batch, &cmdbuf->batches, node) {
-         VkResult result = panvk_kbase_jm_submit_batch(queue, cmdbuf, batch,
-                                                      NULL, 0, NULL, 0);
-         if (result != VK_SUCCESS)
-            return vk_queue_set_lost(vk_queue, "kbase JM submission failed");
-      }
-   }
+       unsigned filled = 0;
+       VkResult mres = VK_SUCCESS;
+       for (uint32_t j = 0; j < submit->command_buffer_count && mres == VK_SUCCESS; ++j) {
+          struct panvk_cmd_buffer *cmdbuf =
+             container_of(submit->command_buffers[j], struct panvk_cmd_buffer, vk);
+          list_for_each_entry(struct panvk_batch, batch, &cmdbuf->batches, node) {
+             mres = panvk_kbase_jm_prepare_batch(queue, cmdbuf, batch,
+                                                 &preps[filled]);
+             if (mres != VK_SUCCESS)
+                break;
+             filled++;
+          }
+       }
 
-   /* Jobs are submitted sychronously (each KBASE_IOCTL_JOB_SUBMIT is waited
-    * on before the next one), so the out fence needs no GPU-side
-    * synchronization: arm the CPU syncs to be signalled on wait. */
+       if (want_async && mres == VK_SUCCESS) {
+          for (unsigned off = 0; off < filled && mres == VK_SUCCESS;) {
+             unsigned n =
+                MIN2(filled - off, (unsigned)PANVK_KBASE_JM_MERGE_MAX_BATCHES);
+             struct base_jd_atom_v2 *atoms = NULL;
+             void *extres_blob = NULL;
+             unsigned nr_atoms = 0;
+             mres = panvk_kbase_jm_build_async_bag(&preps[off], n, &atoms,
+                                                  &extres_blob, &nr_atoms);
+             if (mres != VK_SUCCESS)
+                break;
+             if (nr_atoms == 0) {
+                free(atoms);
+                free(extres_blob);
+                for (unsigned b = off; b < off + n; b++) {
+                   preps[b].batch->issued = true;
+                   preps[b].cmdbuf->async_seqno = async_seqno;
+                }
+                off += n;
+                continue;
+             }
+             uint64_t seqno =
+                panvk_kbase_async_submit(dev, atoms, nr_atoms,
+                                         sizeof(atoms[0]), extres_blob);
+             if (!seqno) {
+                mres = vk_queue_set_lost(vk_queue, "kbase JM async submission failed");
+                break;
+             }
+             async_seqno = seqno;
+             for (unsigned b = off; b < off + n; b++) {
+                preps[b].batch->issued = true;
+                preps[b].cmdbuf->async_seqno = seqno;
+             }
+             off += n;
+          }
+       } else {
+          for (unsigned off = 0; off < filled && mres == VK_SUCCESS;) {
+             unsigned n =
+                MIN2(filled - off, (unsigned)PANVK_KBASE_JM_MERGE_MAX_BATCHES);
+             mres = panvk_kbase_jm_submit_merged(dev, vk_queue, &preps[off], n);
+             off += n;
+          }
+       }
+
+       free(preps);
+       if (mres != VK_SUCCESS)
+          return mres;
+    } else {
+       for (uint32_t j = 0; j < submit->command_buffer_count; ++j) {
+          struct panvk_cmd_buffer *cmdbuf =
+             container_of(submit->command_buffers[j], struct panvk_cmd_buffer, vk);
+
+          unsigned nb = 0;
+          list_for_each_entry(struct panvk_batch, batch, &cmdbuf->batches, node)
+             nb++;
+          if (unlikely(getenv("PANVK_VERBOSE")))
+             fprintf(stderr, "PANVKDBG kbase submit cmdbuf[%u]: batches=%u\n", j, nb);
+
+          list_for_each_entry(struct panvk_batch, batch, &cmdbuf->batches, node) {
+             VkResult result = panvk_kbase_jm_submit_batch(queue, cmdbuf, batch,
+                                                          NULL, 0, NULL, 0);
+             if (result != VK_SUCCESS)
+                return vk_queue_set_lost(vk_queue, "kbase JM submission failed");
+          }
+       }
+    }
+
+   /* Out signals: in async mode they fire when the submitted work retires;
+    * otherwise (fully synchronous submits) they are already complete. */
    for (unsigned i = 0; i < submit->signal_count; i++) {
       assert(submit->signals[i].signal_value == 0);
-      panvk_kbase_sync_set_pending(submit->signals[i].sync, queue,
-                                   panvk_jm_kbase_wait_done, targets);
+      if (want_async && async_seqno) {
+         const uint64_t async_targets[PANVK_KBASE_SYNC_TARGET_COUNT] = {
+            async_seqno,
+            (uint64_t)(uintptr_t)dev,
+            0,
+         };
+         panvk_kbase_sync_set_pending(submit->signals[i].sync, NULL,
+                                      panvk_kbase_async_wait_bag,
+                                      async_targets);
+      } else {
+         panvk_kbase_sync_set_pending(submit->signals[i].sync, queue,
+                                      panvk_jm_kbase_wait_done, targets);
+      }
    }
 
    return VK_SUCCESS;

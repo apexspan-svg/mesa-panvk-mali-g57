@@ -135,9 +135,70 @@ struct panvk_device {
    };
 
    int drm_fd;
+
+   /* kbase JM async submission engine state (panvk_kbase_async.c).
+    * Submissions are serialized per device (at most one bag in flight),
+    * so completion is contiguous and waiters use sequence numbers only.
+    * Active only on kbase with PANVK_ASYNC=1; the engine no-ops otherwise. */
+   struct {
+      simple_mtx_t lock;
+      bool init;
+      bool enabled;
+      bool lost;
+      uint64_t seqno;
+      uint64_t completed_seqno;
+      /* The single outstanding bag, NULL when idle. Owned by the engine;
+       * fields below are valid only while holding lock. */
+      struct panvk_kbase_jm_bag *bag;
+   } async;
 };
 
 VK_DEFINE_HANDLE_CASTS(panvk_device, vk.base, VkDevice, VK_OBJECT_TYPE_DEVICE)
+
+/* kbase JM async submission engine (panvk_kbase_async.c). All functions are
+ * safe to call on any KMD; they no-op unless the device runs on kbase with
+ * PANVK_ASYNC=1. Sequence numbers identify submitted bags; 0 means none. */
+struct panvk_kbase_jm_bag;
+
+void panvk_kbase_async_init(struct panvk_device *dev);
+void panvk_kbase_async_fini(struct panvk_device *dev);
+bool panvk_kbase_async_is_enabled(struct panvk_device *dev);
+
+/* Submit a bag without waiting. Takes ownership of the atoms/extres memory
+ * (freed on retirement). The caller must have ensured any previous bag
+ * completed (per-device serialization). Returns the bag sequence number,
+ * or 0 on ioctl failure (device is then marked lost). */
+uint64_t panvk_kbase_async_submit(struct panvk_device *dev, void *atoms,
+                                  unsigned nr_atoms, unsigned stride,
+                                  void *extres_blob);
+
+/* Block until the given sequence number has retired (or failed), or the
+ * absolute timeout (ns, UINT64_MAX for infinite) expires. Returns
+ * VK_SUCCESS, VK_TIMEOUT, or VK_ERROR_DEVICE_LOST. */
+VkResult panvk_kbase_async_wait_seqno(struct panvk_device *dev,
+                                      uint64_t seqno, uint64_t abs_timeout_ns);
+
+/* Block until nothing is in flight. */
+VkResult panvk_kbase_async_drain(struct panvk_device *dev);
+
+/* True if any bag is currently in flight (nonblocking check). */
+bool panvk_kbase_async_busy(struct panvk_device *dev);
+
+/* Drain only if busy; otherwise return immediately. For free paths that must
+ * not stall when the GPU is idle. */
+static inline VkResult
+panvk_kbase_async_drain_if_busy(struct panvk_device *dev)
+{
+   if (!panvk_kbase_async_busy(dev))
+      return VK_SUCCESS;
+   return panvk_kbase_async_drain(dev);
+}
+
+/* vk_sync wait callback: targets[0] carries the sequence number to wait for.
+ * Matches panvk_kbase_sync_wait_func. */
+VkResult panvk_kbase_async_wait_bag(void *data,
+                                    const uint64_t targets[PANVK_KBASE_SYNC_TARGET_COUNT],
+                                    uint64_t abs_timeout_ns);
 
 static inline struct panvk_device *
 to_panvk_device(struct vk_device *dev)

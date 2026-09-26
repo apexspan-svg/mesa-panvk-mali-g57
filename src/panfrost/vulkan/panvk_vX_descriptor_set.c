@@ -424,6 +424,10 @@ panvk_per_arch(DestroyDescriptorPool)(VkDevice _device, VkDescriptorPool _pool,
    VK_FROM_HANDLE(panvk_device, device, _device);
    VK_FROM_HANDLE(panvk_descriptor_pool, pool, _pool);
 
+   /* Async mode: sets from this pool may still be referenced in flight. */
+   if (pool)
+      panvk_kbase_async_drain_if_busy(device);
+
    if (pool)
       panvk_destroy_descriptor_pool(device, pAllocator, pool);
 }
@@ -656,6 +660,10 @@ panvk_per_arch(ResetDescriptorPool)(VkDevice _device, VkDescriptorPool _pool,
                                     VkDescriptorPoolResetFlags flags)
 {
    VK_FROM_HANDLE(panvk_descriptor_pool, pool, _pool);
+   VK_FROM_HANDLE(panvk_device, device, _device);
+
+   /* Async mode: sets from this pool may still be referenced in flight. */
+   panvk_kbase_async_drain_if_busy(device);
 
    for (uint32_t i = 0; i < pool->max_sets; i++)
       panvk_desc_pool_free_set(pool, &pool->sets[i]);

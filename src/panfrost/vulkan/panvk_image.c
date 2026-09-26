@@ -852,6 +852,9 @@ panvk_DestroyImage(VkDevice _device, VkImage _image,
    if (!image)
       return;
 
+   /* Async mode: the image's memory may still be in flight. */
+   panvk_kbase_async_drain_if_busy(device);
+
    if (image->vk.create_flags &
        VK_IMAGE_CREATE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_BIT_EXT) {
       for (uint32_t i = 0; i < ARRAY_SIZE(image->ms_imgs); ++i) {

@@ -434,6 +434,15 @@ panvk_reset_cmdbuf(struct vk_command_buffer *vk_cmdbuf,
    struct panvk_cmd_buffer *cmdbuf =
       container_of(vk_cmdbuf, struct panvk_cmd_buffer, vk);
 
+   /* Async mode: the command buffer's pools may still be executing. Wait
+    * for its last submission before recycling anything (usually already
+    * complete, making this a no-op). */
+   if (cmdbuf->async_seqno) {
+      struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+      panvk_kbase_async_wait_seqno(dev, cmdbuf->async_seqno, UINT64_MAX);
+      cmdbuf->async_seqno = 0;
+   }
+
    vk_command_buffer_reset(&cmdbuf->vk);
 
    list_for_each_entry_safe(struct panvk_batch, batch, &cmdbuf->batches, node) {
@@ -458,6 +467,13 @@ panvk_destroy_cmdbuf(struct vk_command_buffer *vk_cmdbuf)
    struct panvk_cmd_buffer *cmdbuf =
       container_of(vk_cmdbuf, struct panvk_cmd_buffer, vk);
    struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+
+   /* Async mode: wait for any in-flight work referencing this command
+    * buffer before tearing down its pools. */
+   if (cmdbuf->async_seqno) {
+      panvk_kbase_async_wait_seqno(dev, cmdbuf->async_seqno, UINT64_MAX);
+      cmdbuf->async_seqno = 0;
+   }
 
    list_for_each_entry_safe(struct panvk_batch, batch, &cmdbuf->batches, node) {
       list_del(&batch->node);

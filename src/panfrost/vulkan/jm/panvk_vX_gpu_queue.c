@@ -407,6 +407,9 @@ void panvk_per_arch(destroy_gpu_queue)(struct vk_queue *vk_queue)
    struct panvk_gpu_queue *queue = container_of(vk_queue, struct panvk_gpu_queue, vk);
    struct panvk_device *dev = to_panvk_device(vk_queue->base.device);
 
+   /* Async mode: no queue may die with work in flight. */
+   panvk_kbase_async_drain(dev);
+
    vk_queue_finish(&queue->vk);
    if (queue->sync && dev->drm_fd >= 0)
       drmSyncobjDestroy(dev->drm_fd, queue->sync);
@@ -433,6 +436,11 @@ panvk_per_arch(QueueWaitIdle)(VkQueue _queue)
       u_printf_with_ctx(stdout, &dev->printf.ctx);
       return VK_ERROR_DEVICE_LOST;
    }
+
+   /* Async mode: wait for all in-flight work on this queue's device. */
+   VkResult wres = panvk_kbase_async_drain(dev);
+   if (wres != VK_SUCCESS)
+      return wres;
 
    return VK_SUCCESS;
 }
