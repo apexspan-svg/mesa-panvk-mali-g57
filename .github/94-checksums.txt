@@ -1,0 +1,13 @@
+97845814755b0d22112d80ce3a7a3896  src/panfrost/vulkan/jm/panvk_cmd_buffer.h
+0872dc20960be8b3ecf1e835003aec68  src/panfrost/vulkan/jm/panvk_vX_cmd_buffer.c
+1972d017dc287f4f9ece1a3f9883d02a  src/panfrost/vulkan/jm/panvk_vX_gpu_queue.c
+59d8b4cd8ebb2d8ec6083db20d102a19  src/panfrost/vulkan/jm/panvk_vX_gpu_queue_kbase.c
+e370cdfd021972b77678dff90b354c45  src/panfrost/vulkan/meson.build
+ee101dc206d4b951fd9d81153aa3243c  src/panfrost/vulkan/panvk_buffer.c
+c043d617b43467ef197f4bd868155a49  src/panfrost/vulkan/panvk_device.h
+0cb2699f66490f257001989948831f91  src/panfrost/vulkan/panvk_device_memory.c
+952c5ed5a3c9720cb9e5e96e79f306de  src/panfrost/vulkan/panvk_image.c
+62b6f4b12ae7433ed00afa5b86e0c2bd  src/panfrost/vulkan/panvk_vX_descriptor_set.c
+ac187ad0f038c82010dbe58d8bebe9f0  src/panfrost/vulkan/panvk_vX_device.c
+4c468553b09156eb184d8ac71a018d2c  src/panfrost/vulkan/panvk_vX_query_pool.c
+639d983e17ee0b8023b0d72995b22a57  src/panfrost/vulkan/panvk_kbase_async.c
