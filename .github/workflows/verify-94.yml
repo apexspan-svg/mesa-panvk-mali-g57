@@ -47,7 +47,7 @@ jobs:
                 bison flex cmake \
                 vulkan-headers vulkan-loader-generic libandroid-shmem \
                 libdrm libxcb xorgproto libx11 libxshmfence \
-                zlib zstd libexpat libxrandr file
+                zlib zstd libexpat libxrandr libclc spirv-llvm-translator file
               pip install --break-system-packages meson mako pyyaml packaging
               export TMPDIR="${TMPDIR:-$PREFIX/tmp}"
               mkdir -p "$TMPDIR"
