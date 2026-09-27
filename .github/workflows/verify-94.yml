@@ -30,8 +30,11 @@ jobs:
           set -euo pipefail
           mkdir -p "${{ github.workspace }}/termux-out"
           chmod 777 "${{ github.workspace }}/termux-out"
+          mkdir -p "${{ github.workspace }}/termux-work"
+          chmod 777 "${{ github.workspace }}/termux-work"
           docker run --rm \
             -v "${{ github.workspace }}:/src:ro" \
+            -v "${{ github.workspace }}/termux-work:/work" \
             -v "${{ github.workspace }}/termux-out:/termux-out" \
             termux/termux-docker:aarch64 \
             bash -c '
@@ -50,9 +53,8 @@ jobs:
                 libdrm libxcb xorgproto libx11 libxshmfence \
                 zlib zstd libexpat libxrandr file
               pip install --break-system-packages meson mako pyyaml packaging
-              mkdir -p /tmp/build-src
-              cp -r /src/. /tmp/build-src/
-              cd /tmp/build-src
+              cp -r /src/. /work/src/
+              cd /work/src
               meson setup build-ci \
                 -Dbuildtype=release \
                 -Dpanvk-use-kbase=true \
