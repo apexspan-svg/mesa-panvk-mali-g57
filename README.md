@@ -61,6 +61,7 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
   * **Direct3D 9 (`wined3d`):** **37.60 – 46.91 FPS** sustained (`FPS: 37.6 | Frame: 482`), verified hardware depth buffer (`D3DFMT_D16`) and Euler rotation.
   * **Direct3D 10 (`d3d10.dll` / DXGI):** **26.10 – 28.85 FPS** sustained (`FPS: 26.1 | Cut Corner | Frame: 163`), verified runtime HLSL 4.0 compilation and dynamic lighting with zero driver hangs.
   * *See [Direct3D 9 & 10 Playtest Report](docs/panvk_g57/DIRECTX_TEST_REPORT.md).*
+  * *Related curiosity: [BCn texture notes](docs/panvk_g57/BCN_SUPPORT_NOTES.md) — this unit appears to decode BC1–BC3 natively (firmware bits + round-trip tests), BC4–7 cleanly refused; note the `textureCompressionBC` feature bit is hardcoded on in this tree, so trust per-format queries instead.*
 
 <p align="center">
   <img src="docs/panvk_g57/images/directx9_live_panvk.png" alt="Direct3D 9 via Wine and PanVK on Mali-G57 MC2" width="600" />
