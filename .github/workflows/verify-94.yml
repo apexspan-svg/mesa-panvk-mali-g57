@@ -31,7 +31,7 @@ jobs:
           mkdir -p "${{ github.workspace }}/termux-out"
           chmod 777 "${{ github.workspace }}/termux-out"
           docker run --rm \
-            -v "${{ github.workspace }}:/src" \
+            -e GITHUB_SHA="${{ github.sha }}" \
             -v "${{ github.workspace }}/termux-out:/termux-out" \
             termux/termux-docker:aarch64 \
             bash -c '
@@ -50,7 +50,14 @@ jobs:
                 libdrm libxcb xorgproto libx11 libxshmfence \
                 zlib zstd libexpat libxrandr file
               pip install --break-system-packages meson mako pyyaml packaging
-              cd /src
+              export TMPDIR="${TMPDIR:-$PREFIX/tmp}"
+              mkdir -p "$TMPDIR"
+              cd "$TMPDIR"
+              rm -rf verify-src
+              git clone --depth 1 https://github.com/apexspan-svg/mesa-panvk-mali-g57.git verify-src
+              cd verify-src
+              git fetch origin "$GITHUB_SHA"
+              git checkout "$GITHUB_SHA"
               meson setup build-ci \
                 -Dbuildtype=release \
                 -Dpanvk-use-kbase=true \
