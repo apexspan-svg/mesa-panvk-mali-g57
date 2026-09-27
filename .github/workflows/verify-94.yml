@@ -50,7 +50,8 @@ jobs:
                 libdrm libxcb xorgproto libx11 libxshmfence \
                 zlib zstd libexpat libxrandr file
               pip install --break-system-packages meson mako pyyaml packaging
-              cp -r /src /tmp/build-src
+              mkdir -p /tmp/build-src
+              cp -r /src/. /tmp/build-src/
               cd /tmp/build-src
               meson setup build-ci \
                 -Dbuildtype=release \
