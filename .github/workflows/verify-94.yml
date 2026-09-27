@@ -44,7 +44,7 @@ jobs:
               pkg update -y || true
               pkg install -y \
                 git clang lld ninja python python-pip pkg-config \
-                bison flex cmake \
+                bison flex cmake glslang shaderc \
                 vulkan-headers vulkan-loader-generic libandroid-shmem \
                 libdrm libxcb xorgproto libx11 libxshmfence \
                 zlib zstd libexpat libxrandr libclc spirv-llvm-translator file
