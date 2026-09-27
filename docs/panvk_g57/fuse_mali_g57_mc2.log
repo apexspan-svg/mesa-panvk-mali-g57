@@ -1,0 +1,34 @@
+# GPU capability readout — Mali-G57 MC2, MediaTek Dimensity 6300
+# Source: /dev/mali0 via kbase JM uAPI ioctls (no Mesa code involved)
+# Date: 2026-09-27. Unit/firmware-specific; not a conformance claim.
+
+JM uAPI 11.38
+TEXTURE_FEATURES_0 (key 9)  = 0xf7fe03fe
+TEXTURE_FEATURES_1 (key 10) = 0xc3fff7ff
+TEXTURE_FEATURES_2 (key 11) = 0xbfe1ff9f
+RAW_TEXFEAT_0 (key 52)      = 0xf7fe03fe
+RAW_TEXFEAT_1 (key 53)      = 0xc3fff7ff
+RAW_TEXFEAT_2 (key 54)      = 0xbfe1ff9f
+
+# Decoded TEXTURE_FEATURES_0 bits (bit = format decoder block present):
+#  bit  7 BC1      on
+#  bit  8 BC2      on
+#  bit  9 BC3      on
+#  bit 10 BC4      off
+#  bit 11 BC4s     off
+#  bit 12 BC5      off
+#  bit 13 BC5s     off
+#  bit 14 BC6Hu    off
+#  bit 15 BC6Hs    off
+#  bit 16 BC7      off
+#  bit 22 ASTC-LDR on
+
+# Corresponding Vulkan per-format features (vkGetPhysicalDeviceFormatProperties,
+# optimal tiling), same device/driver:
+# BC1 optimal=0x0000d401 SAMPLED XFER DST
+# BC2 optimal=0x0000d401 SAMPLED XFER DST
+# BC3 optimal=0x0000d401 SAMPLED XFER DST
+# BC4 optimal=0x00000000
+# BC5 optimal=0x00000000
+# BC6H optimal=0x00000000
+# BC7 optimal=0x00000000
