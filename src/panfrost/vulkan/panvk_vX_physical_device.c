@@ -10,6 +10,7 @@
  */
 
 #include <sys/sysmacros.h>
+#include <stdlib.h>
 
 #include "git_sha1.h"
 
@@ -1037,7 +1038,11 @@ panvk_per_arch(get_physical_device_properties)(
       .strictLines = true,
       .standardSampleLocations = true,
       .optimalBufferCopyOffsetAlignment = 64,
-      .optimalBufferCopyRowPitchAlignment = 64,
+      /* AHB dma-buf stride granularity is 64px; align buffer copies
+       * the same way when the AHB WSI path is on so gralloc strides always
+       * match WSI row pitches for 4Bpp formats. */
+      .optimalBufferCopyRowPitchAlignment =
+         getenv("PANVK_AHB_WSI") ? 256 : 64,
 
       /* If we can't detect the cacheline size, assume 64 bytes cachelines. */
       .nonCoherentAtomSize = util_has_cache_ops() ? util_cache_granularity() : 64,

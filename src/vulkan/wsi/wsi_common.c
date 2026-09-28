@@ -3222,8 +3222,24 @@ wsi_create_buffer_blit_context(const struct wsi_swapchain *chain,
       __vk_append_struct(&buf_mem_info, &memory_export_info);
    }
 
+   if (wsi->create_dma_buf_buffer_mem) {
+      result = wsi->create_dma_buf_buffer_mem(
+         chain->device, info->create.extent.width, info->create.extent.height,
+         info->create.format, info->linear_size, info->linear_stride,
+         buf_mem_info.memoryTypeIndex, &image->blit.memory);
+      if (result == VK_SUCCESS)
+         goto blit_mem_done;
+      /* fall through to the normal allocation */
+   }
+
    result = wsi->AllocateMemory(chain->device, &buf_mem_info,
                                 &chain->alloc, &image->blit.memory);
+   if (result != VK_SUCCESS)
+      return result;
+
+blit_mem_done:;
+   result = wsi->BindBufferMemory(chain->device, image->blit.buffer,
+                                  image->blit.memory, 0);
    if (result != VK_SUCCESS)
       return result;
 

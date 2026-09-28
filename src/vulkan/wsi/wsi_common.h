@@ -172,6 +172,19 @@ struct wsi_device {
 
    bool sw;
 
+   /* Optional driver hook: back a WSI buffer-blit destination buffer with
+    * driver-provided dma-buf memory (e.g. Android Hardware Buffers) instead
+    * of a normal allocation. The driver must guarantee the buffer's real
+    * row stride in pixels equals width (gralloc-style padding is the
+    * driver's problem to avoid or refuse). NULL = default path.
+    */
+   VkResult (*create_dma_buf_buffer_mem)(VkDevice device, uint32_t width,
+                                         uint32_t height, VkFormat format,
+                                         VkDeviceSize size,
+                                         uint32_t row_pitch_bytes,
+                                         uint32_t memory_type_index,
+                                         VkDeviceMemory *out_mem);
+
    /* Set to true if the implementation is ok with linear WSI images. */
    bool wants_linear;
 

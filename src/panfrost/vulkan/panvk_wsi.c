@@ -11,6 +11,7 @@
 
 #include <stdio.h>
 #include "panvk_wsi.h"
+#include "panvk_device_memory.h"
 #include "panvk_instance.h"
 #include "panvk_physical_device.h"
 
@@ -117,6 +118,12 @@ panvk_wsi_init(struct panvk_physical_device *physical_device)
 #endif
    VkResult result;
 
+   /* AHB-backed WSI images (PANVK_AHB_WSI=1): swapchain image memory comes
+    * from imported Android Hardware Buffer dma-bufs, so the native DRI3
+    * present path can be used instead of the SHM fallback. Default off. */
+   const bool ahb_wsi =
+      uses_kbase && getenv("PANVK_AHB_WSI") != NULL;
+
    fprintf(stderr,
            "PANVKDBG WSI: uses_kbase=%d termux_raw=%d raw_dri3=%d "
            "kbase_dmabuf=%d sw_device=%d raw_fd_modifier=%d\n",
@@ -132,8 +139,8 @@ panvk_wsi_init(struct panvk_physical_device *physical_device)
                             panvk_wsi_proc_addr, &instance->vk.alloc, -1,
                             &instance->drirc.options,
                             &(struct wsi_device_options){
-                               .sw_device = uses_kbase && !kbase_dmabuf,
-                               .wait_present_before_queue = kbase_dmabuf,
+                               .sw_device = !ahb_wsi && uses_kbase && !kbase_dmabuf,
+                               .wait_present_before_queue = kbase_dmabuf || ahb_wsi,
                                .x11_use_raw_fd_modifier =
                                   kbase_dmabuf && kbase_raw_dri3,
                             });
@@ -166,6 +173,11 @@ panvk_wsi_init(struct panvk_physical_device *physical_device)
     */
    physical_device->wsi_device.supports_modifiers =
       !uses_kbase || (kbase_dmabuf && !kbase_raw_dri3);
+   /* Blit path (PRIME) handles padded gralloc strides via row lengths;
+    * keep native direct path off: AHB stride can exceed image width. */
+   physical_device->wsi_device.supports_scanout = false;
+   physical_device->wsi_device.create_dma_buf_buffer_mem =
+      panvk_create_dma_buf_buffer_mem;
    physical_device->wsi_device.can_present_on_device =
       panvk_can_present_on_device;
 

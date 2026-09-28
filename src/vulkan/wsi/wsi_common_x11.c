@@ -2304,6 +2304,19 @@ static unsigned x11_driver_owned_images(const struct x11_swapchain *chain)
  * For IMMEDIATE and MAILBOX, the application thread pumped the event queue, which caused a lot of pain
  * when trying to deal with present wait.
  */
+static bool
+x11_event_thread_poll(void)
+{
+   /* Termux:X11 never emits Present CompleteNotify for our DRI3 pixmaps, so
+    * a blocking xcb_wait_for_special_event() can sleep forever: no socket
+    * traffic ever wakes it, and unregistering at destroy does not interrupt
+    * the poll on some xcb builds. Polling keeps teardown terminating. */
+   static int cached = -1;
+   if (cached < 0)
+      cached = getenv("PANVK_X11_EVENT_POLL") != NULL;
+   return cached != 0;
+}
+
 static int
 x11_manage_event_queue(void *state)
 {
@@ -2344,8 +2357,23 @@ x11_manage_event_queue(void *state)
          /* Only yield lock when blocking on X11 event. */
          mesa_logd("WSI x11: event thread blocking on xcb_wait_for_special_event");
          mtx_unlock(&chain->thread_state_lock);
-         xcb_generic_event_t *event =
-               xcb_wait_for_special_event(chain->conn, chain->special_event);
+         xcb_generic_event_t *event = NULL;
+         if (x11_event_thread_poll()) {
+            for (;;) {
+               event = xcb_poll_for_special_event(chain->conn,
+                                                  chain->special_event);
+               if (event)
+                  break;
+               mtx_lock(&chain->thread_state_lock);
+               VkResult poll_status = chain->status;
+               mtx_unlock(&chain->thread_state_lock);
+               if (poll_status < 0)
+                  break;
+               usleep(1000);
+            }
+         } else {
+            event = xcb_wait_for_special_event(chain->conn, chain->special_event);
+         }
          mtx_lock(&chain->thread_state_lock);
          mesa_logd("WSI x11: event thread woke from special_event wait (event=%p)",
                    (void *)event);

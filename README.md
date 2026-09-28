@@ -30,7 +30,7 @@ Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using t
     * **Broad Sample Compatibility:** Verified loading and running almost all official test demos from [webglsamples.org](https://webglsamples.org/) on MediaTek Dimensity 6300 (Mali-G57 MC2) (dynamic lighting, shaders, textures, reflections, and particle systems).
     * **WebGL Aquarium (500 Fishes at 1024x1024 Canvas):**
       * **PanVK:** **15–25 FPS** (peak ~26 FPS, real-time interactive rendering)
-      * **VirGL (`virpipe`):** **~3 FPS** (flat-lined hard bottleneck due to socket IPC serialization)
+      * **VirGL (`virpipe`):** **~3 FPS** typically (socket IPC serialization bottleneck) — but highly unstable: observed bursting to ~23 FPS for seconds, matching PanVK momentarily, then collapsing. Short VirGL samples mislead; it fails at sustainability while PanVK holds steady.
       * Delivers a **5x–8x real-world speedup** over VirGL.
 
 <p align="center">
@@ -179,6 +179,29 @@ vkmark --winsys xcb -s 640x480
 ```
 
 **Expected Performance on Mali-G57 MC2:** full-suite **~94** (97 on re-run), zero errors — vs ~81 for the default build on the same device state. Full source: branch [`g57-vkmark-94`](https://github.com/apexspan-svg/mesa-panvk-mali-g57/tree/g57-vkmark-94) (rebuilding it reproduces the release binary byte-for-byte, md5 `d883a28e…`).
+
+### Zero-copy dma-buf WSI build (`v1.1.0-ahb`) *(Update)*
+
+A third prebuilt flavor adds an opt-in zero-copy present path (`PANVK_AHB_WSI=1`, AHB dma-buf import → DRI3 pixmap, no per-frame CPU copy) plus a teardown-safe event thread (`PANVK_X11_EVENT_POLL=1`, required on Termux:X11 which never emits Present CompleteNotify):
+
+```bash
+curl -LO https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/download/v1.1.0-ahb/panvk-mali-g57-v1.1.0-ahb.tar.gz
+tar -xzvf panvk-mali-g57-v1.1.0-ahb.tar.gz
+cd panvk-mali-g57-v1.1.0-ahb
+./install.sh
+```
+
+```bash
+export DISPLAY=:0
+export VK_ICD_FILENAMES=$PREFIX/share/vulkan/icd.d/panfrost_icd.aarch64.json
+export PANVK_NO_AFBC=1
+export PANVK_AHB_WSI=1
+export PANVK_X11_EVENT_POLL=1
+export PANVK_ASYNC=1
+vkmark --winsys xcb -s 640x480
+```
+
+**Measured on Mali-G57 MC2:** vkmark 640x480 immediate 78 → **222** (mailbox 68 → 194); 1280x720 immediate 31 → **164**; all runs exit `0`. glmark2/Zink stays on the default path (Zink uses FIFO; AHB pixmaps get no completions, so it locksteps — native Vulkan is where this build wins). Binary md5 `127bc973…`. Full source: branch [`g57-ahb-wsi`](https://github.com/apexspan-svg/mesa-panvk-mali-g57/tree/g57-ahb-wsi).
 
 ---
 

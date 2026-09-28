@@ -1750,16 +1750,35 @@ kbase_kmod_import_dmabuf(struct pan_kmod_dev *dev,
    if (kmod_flags & PAN_KMOD_BO_FLAG_WB_MMAP)
       import_flags |= BASE_MEM_CACHED_CPU;
 
-   int import_fd = kbase_bo->dmabuf_fd;
-   union kbase_ioctl_mem_import req = {
-      .in = {
-         .flags = import_flags,
-         .phandle = (uintptr_t)&import_fd,
-         .type = BASE_MEM_IMPORT_TYPE_UMM,
-      },
+   /* Some exporters (e.g. Android gralloc CPU-uncached heaps) reject the
+    * full coherency/shared set; retry with the minimal GPU-only set which
+    * suffices for GPU rendering + display.
+    */
+   const uint64_t flag_tries[] = {
+      import_flags,
+      BASE_MEM_PROT_GPU_RD | BASE_MEM_PROT_GPU_WR,
    };
 
-   if (ioctl(dev->fd, KBASE_IOCTL_MEM_IMPORT, &req)) {
+   int import_fd = kbase_bo->dmabuf_fd;
+   union kbase_ioctl_mem_import req;
+   unsigned t;
+   for (t = 0; t < 2; t++) {
+      req = (union kbase_ioctl_mem_import) {
+         .in = {
+            .flags = flag_tries[t],
+            .phandle = (uintptr_t)&import_fd,
+            .type = BASE_MEM_IMPORT_TYPE_UMM,
+         },
+      };
+
+      if (!ioctl(dev->fd, KBASE_IOCTL_MEM_IMPORT, &req))
+         break;
+
+      mesa_logd("kbase: KBASE_IOCTL_MEM_IMPORT failed with flags=0x%" PRIx64
+                ": %s", flag_tries[t], strerror(errno));
+   }
+
+   if (t == 2) {
       mesa_loge("kbase: KBASE_IOCTL_MEM_IMPORT failed: %s", strerror(errno));
       goto err_close_dmabuf;
    }
