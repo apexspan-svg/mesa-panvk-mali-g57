@@ -22,6 +22,8 @@
 #include "panvk_instance.h"
 #include "panvk_physical_device.h"
 
+#include "vk_common_entrypoints.h"
+
 #include "drm-uapi/drm_fourcc.h"
 #include "util/u_atomic.h"
 #include "util/u_debug.h"
@@ -1434,4 +1436,15 @@ panvk_BindImageMemory2(VkDevice device, uint32_t bindInfoCount,
    }
 
    return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+panvk_GetImageDrmFormatModifierPropertiesEXT(
+   VkDevice device, VkImage image,
+   VkImageDrmFormatModifierPropertiesEXT *pProperties)
+{
+   /* drm_format_mod is tracked for every image (LINEAR, AFBC, interleaved),
+    * so the common helper is all we need. */
+   return vk_common_GetImageDrmFormatModifierPropertiesEXT(device, image,
+                                                           pProperties);
 }

@@ -393,6 +393,24 @@ panvk_AllocateMemory(VkDevice _device,
          bo_flags |= PAN_KMOD_BO_FLAG_WB_MMAP;
 
       bo_flags = panvk_device_adjust_bo_flags(device, bo_flags);
+#if defined(HAVE_PAN_KMOD_KBASE)
+      /* Exportable allocations (DMA_BUF/OPAQUE_FD) cannot use native kbase
+       * MEM_ALLOC BOs: those have no dma-buf and can never be exported.
+       * Allocate from the system dma-heap and import via UMM instead, so
+       * vkGetMemoryFdKHR works. Fail honestly when no dma-heap exists. */
+      if (can_be_exported && physical_device->kbase_node_path[0] &&
+          (export_info->handleTypes &
+           (VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT |
+            VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT))) {
+         /* No dma-heap and no gralloc AHardwareBuffer -> ENOSYS inside. */
+         mem->bo = kbase_kmod_bo_alloc_exportable(
+            device->kmod.dev, pAllocateInfo->allocationSize, bo_flags);
+         if (!mem->bo) {
+            result = panvk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+            goto err_destroy_mem;
+         }
+      } else
+#endif
       mem->bo = pan_kmod_bo_alloc(device->kmod.dev,
                                   can_be_exported ? NULL : device->kmod.vm,
                                   pAllocateInfo->allocationSize, bo_flags);

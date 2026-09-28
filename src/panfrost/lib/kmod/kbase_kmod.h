@@ -99,6 +99,12 @@ struct pan_kmod_bo *
 kbase_kmod_import_user_buffer(struct pan_kmod_dev *dev, void *ptr,
                               uint64_t size);
 
+/* dma-heap-backed allocation importable/exportable as a dma-buf fd.
+ * Returns NULL (ENOSYS) when no dma-heap is available. */
+struct pan_kmod_bo *
+kbase_kmod_bo_alloc_exportable(struct pan_kmod_dev *dev, uint64_t size,
+                               uint32_t kmod_flags);
+
 unsigned
 kbase_kmod_get_user_buffer_vas(struct pan_kmod_dev *dev,
                                uint64_t *vas, unsigned max_vas);
