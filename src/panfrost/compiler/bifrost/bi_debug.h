@@ -35,6 +35,10 @@ extern "C" {
 
 extern unsigned bifrost_debug;
 
+/* Per-thread switch to skip backend optimisations for one compile (used by
+ * the SPILL_NOOPT shader retry in panvk). */
+extern __thread int bi_force_noopt;
+
 void bifrost_init_debug_options(void);
 
 bool bifrost_will_dump_shaders(void);
