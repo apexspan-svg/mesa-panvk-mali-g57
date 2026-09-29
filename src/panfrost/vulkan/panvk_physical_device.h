@@ -115,6 +115,10 @@ typedef VkResult (*panvk_kbase_sync_wait_func)(
 void panvk_kbase_sync_set_pending(
    struct vk_sync *sync, void *data, panvk_kbase_sync_wait_func wait,
    const uint64_t targets[PANVK_KBASE_SYNC_TARGET_COUNT]);
+
+/* Imported sync_file fd for GPU WAIT atoms (>= 0), or -1 when the sync is
+ * not kbase-backed or carries no imported fence. */
+int panvk_kbase_sync_get_import_fd(struct vk_sync *sync);
 #endif
 
 void panvk_physical_device_finish(struct panvk_physical_device *device);
