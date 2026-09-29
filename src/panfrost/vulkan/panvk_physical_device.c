@@ -13,6 +13,7 @@
 
 #include <sched.h>
 #include <errno.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -883,6 +884,55 @@ kbase_cpu_sync_move(UNUSED struct vk_device *device, struct vk_sync *dst,
    return VK_SUCCESS;
 }
 
+/* Sync-file import/export for the CPU-resolved kbase sync type (mirrors the
+ * FristOneRR approach): our submits resolve on the CPU, so at export time the
+ * work can always be drained first and the -1 fd ("already signaled", the
+ * Linux sync_file convention) handed out. Import polls a real fd, if any,
+ * then signals. Correct under serialize-on-export; no kernel fence needed. */
+static VkResult
+kbase_cpu_sync_import_sync_file(struct vk_device *device, struct vk_sync *sync,
+                                int sync_file)
+{
+   if (sync_file >= 0) {
+      struct pollfd pfd = { .fd = sync_file, .events = POLLIN };
+      int waited_ms = 0;
+      while (waited_ms < 2000) {
+         int r = poll(&pfd, 1, 100);
+         if (r > 0)
+            break;
+         if (r < 0 && errno != EINTR)
+            break;
+         waited_ms += 100;
+      }
+   }
+   return kbase_cpu_sync_signal(device, sync, 0);
+}
+
+static VkResult
+kbase_cpu_sync_export_sync_file(struct vk_device *device, struct vk_sync *sync,
+                                int *sync_file)
+{
+   struct kbase_cpu_sync *ks = container_of(sync, struct kbase_cpu_sync, sync);
+
+   mtx_lock(&ks->mutex);
+   enum kbase_cpu_sync_state st = ks->state;
+   mtx_unlock(&ks->mutex);
+   if (st == KBASE_CPU_SYNC_RESET) {
+      *sync_file = -1;
+      return VK_SUCCESS;
+   }
+
+   VkResult r = kbase_cpu_sync_wait_one(device, ks, 0,
+                                        os_time_get_nano() + 5000000000ull);
+   if (r == VK_TIMEOUT)
+      return vk_errorf(device, VK_ERROR_UNKNOWN,
+                       "kbase export_sync_file timeout");
+   if (r != VK_SUCCESS)
+      return r;
+   *sync_file = -1;
+   return VK_SUCCESS;
+}
+
 static const struct vk_sync_type kbase_cpu_sync_type = {
    .size      = sizeof(struct kbase_cpu_sync),
    .features  = VK_SYNC_FEATURE_BINARY |
@@ -899,6 +949,8 @@ static const struct vk_sync_type kbase_cpu_sync_type = {
    .reset     = kbase_cpu_sync_reset,
    .wait_many = kbase_cpu_sync_wait_many,
    .move      = kbase_cpu_sync_move,
+   .import_sync_file = kbase_cpu_sync_import_sync_file,
+   .export_sync_file = kbase_cpu_sync_export_sync_file,
 };
 
 /* Set up sync types for a kbase (non-DRM) physical device.

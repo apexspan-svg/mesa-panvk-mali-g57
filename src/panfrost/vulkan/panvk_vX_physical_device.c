@@ -69,12 +69,12 @@ panvk_per_arch(get_physical_device_extensions)(
       .KHR_dynamic_rendering_local_read = true,
       /* ADHOC-DBG: hide external memory group to avoid Wine win32 ext mismatch
        * (overridden by PANVK_FD_INTEROP=1 now that dma-buf export works). */
-      .KHR_external_fence = false,
-      .KHR_external_fence_fd = false,
+      .KHR_external_fence = fd_interop,
+      .KHR_external_fence_fd = fd_interop,
       .KHR_external_memory = fd_interop,
       .KHR_external_memory_fd = fd_interop,
-      .KHR_external_semaphore = false,
-      .KHR_external_semaphore_fd = false,
+      .KHR_external_semaphore = fd_interop,
+      .KHR_external_semaphore_fd = fd_interop,
       .KHR_format_feature_flags2 = true,
       .KHR_get_memory_requirements2 = true,
       .KHR_global_priority = true,
