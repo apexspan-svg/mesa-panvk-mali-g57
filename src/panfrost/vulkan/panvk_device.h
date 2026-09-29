@@ -164,6 +164,11 @@ struct panvk_device {
        * first fragment waits for it, keeping frag work serialized across
        * bags while vertex work overlaps. */
       uint8_t last_frag;
+      /* Most recently submitted atom id overall (0 = none/stale). */
+      uint8_t last_atom;
+      /* Cached kbase sync-timeline fd for fence TRIGGER exports (-1 =
+       * none yet). Created on first semaphore export. */
+      int fence_stream;
       /* Debug counters (overlap mode). */
       uint64_t dbg_submits;
       unsigned dbg_max_inflight;
@@ -188,6 +193,8 @@ struct panvk_kbase_jm_bag {
    uint64_t seqno;
    void *atoms;
    void *extres_blob;
+   /* base_fence array for SOFT_FENCE_WAIT atoms (NULL when unused). */
+   void *fence_data;
    unsigned nr_atoms;
    unsigned pending;
    bool failed;
@@ -228,6 +235,14 @@ void panvk_kbase_async_retire_bags(struct panvk_kbase_jm_bag **retired,
 
 /* Oldest in-flight sequence number, 0 when idle (single-bag or list). */
 uint64_t panvk_kbase_async_head_seqno(struct panvk_device *dev);
+
+/* Submit a SOFT_FENCE_TRIGGER atom (overlap mode) chained after dep_atom.
+ * Fills fence->fd during submit; returns the bag seqno, 0 on failure.
+ * Implemented in the JM submit TU (needs atom layout). */
+struct kbase_base_fence;
+uint64_t panvk_kbase_jm_submit_trigger(struct panvk_device *dev,
+                                       uint8_t dep_atom,
+                                       struct kbase_base_fence *fence);
 
 /* True if any bag is currently in flight (nonblocking check). */
 bool panvk_kbase_async_busy(struct panvk_device *dev);

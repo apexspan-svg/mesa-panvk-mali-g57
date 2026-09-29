@@ -645,6 +645,10 @@ struct kbase_cpu_sync {
    void *pending_data;
    panvk_kbase_sync_wait_func pending_wait;
    uint64_t targets[PANVK_KBASE_SYNC_TARGET_COUNT];
+   /* Imported sync_file fd (>= 0) for GPU WAIT atoms at submit. The import
+    * still signals immediately (submit-time waits resolve as before); the
+    * fd gives the hardware its own ordering edge under pipelining. */
+   int import_fd;
 };
 
 static VkResult
@@ -667,6 +671,7 @@ kbase_cpu_sync_init(struct vk_device *device, struct vk_sync *sync,
    ks->pending_data = NULL;
    ks->pending_wait = NULL;
    memset(ks->targets, 0, sizeof(ks->targets));
+   ks->import_fd = -1;
    return VK_SUCCESS;
 }
 
@@ -674,6 +679,10 @@ static void
 kbase_cpu_sync_finish(UNUSED struct vk_device *device, struct vk_sync *sync)
 {
    struct kbase_cpu_sync *ks = container_of(sync, struct kbase_cpu_sync, sync);
+   if (ks->import_fd >= 0) {
+      close(ks->import_fd);
+      ks->import_fd = -1;
+   }
    u_cnd_monotonic_destroy(&ks->cond);
    mtx_destroy(&ks->mutex);
 }
@@ -688,6 +697,11 @@ kbase_cpu_sync_signal(UNUSED struct vk_device *device, struct vk_sync *sync,
    ks->result = VK_SUCCESS;
    ks->pending_data = NULL;
    ks->pending_wait = NULL;
+   if (ks->import_fd >= 0) {
+      /* A fresh signal supersedes any imported fence. */
+      close(ks->import_fd);
+      ks->import_fd = -1;
+   }
    u_cnd_monotonic_broadcast(&ks->cond);
    mtx_unlock(&ks->mutex);
    return VK_SUCCESS;
@@ -704,6 +718,10 @@ kbase_cpu_sync_reset(UNUSED struct vk_device *device, struct vk_sync *sync)
    ks->pending_data = NULL;
    ks->pending_wait = NULL;
    memset(ks->targets, 0, sizeof(ks->targets));
+   if (ks->import_fd >= 0) {
+      close(ks->import_fd);
+      ks->import_fd = -1;
+   }
    mtx_unlock(&ks->mutex);
    return VK_SUCCESS;
 }
@@ -893,7 +911,23 @@ static VkResult
 kbase_cpu_sync_import_sync_file(struct vk_device *device, struct vk_sync *sync,
                                 int sync_file)
 {
+   struct kbase_cpu_sync *ks = container_of(sync, struct kbase_cpu_sync, sync);
    if (sync_file >= 0) {
+      /* Validate against the kernel fence interface (best effort; failure
+       * only downgrades to the plain poll below). The dup'd fd is retained
+       * for GPU WAIT atoms emitted at submit time. */
+      struct panvk_device *pdev = to_panvk_device(device);
+      if (pdev->kmod.dev &&
+          kbase_kmod_fence_validate(pdev->kmod.dev, sync_file))
+         mesa_logd("kbase: imported fence fd failed validation");
+      int dup = fcntl(sync_file, F_DUPFD_CLOEXEC, 3);
+      if (dup >= 0) {
+         mtx_lock(&ks->mutex);
+         if (ks->import_fd >= 0)
+            close(ks->import_fd);
+         ks->import_fd = dup;
+         mtx_unlock(&ks->mutex);
+      }
       struct pollfd pfd = { .fd = sync_file, .events = POLLIN };
       int waited_ms = 0;
       while (waited_ms < 2000) {
@@ -908,6 +942,19 @@ kbase_cpu_sync_import_sync_file(struct vk_device *device, struct vk_sync *sync,
    return kbase_cpu_sync_signal(device, sync, 0);
 }
 
+/* Imported sync_file fd for GPU WAIT atoms (>= 0), or -1. */
+int
+panvk_kbase_sync_get_import_fd(struct vk_sync *sync)
+{
+   if (!sync || sync->type->wait_many != kbase_cpu_sync_wait_many)
+      return -1;
+   struct kbase_cpu_sync *ks = container_of(sync, struct kbase_cpu_sync, sync);
+   mtx_lock(&ks->mutex);
+   int fd = ks->import_fd;
+   mtx_unlock(&ks->mutex);
+   return fd;
+}
+
 static VkResult
 kbase_cpu_sync_export_sync_file(struct vk_device *device, struct vk_sync *sync,
                                 int *sync_file)
@@ -920,6 +967,33 @@ kbase_cpu_sync_export_sync_file(struct vk_device *device, struct vk_sync *sync,
    if (st == KBASE_CPU_SYNC_RESET) {
       *sync_file = -1;
       return VK_SUCCESS;
+   }
+
+   struct panvk_device *pdev = to_panvk_device(device);
+   if (pdev->async.overlap && pdev->kmod.dev) {
+      /* Real export: TRIGGER atom chained after recent work. The kernel
+       * fills fence.fd during submit; hand it out (caller owns it). */
+      simple_mtx_lock(&pdev->async.lock);
+      if (pdev->async.fence_stream < 0) {
+         int s = kbase_kmod_stream_create(pdev->kmod.dev, "panvk-fence");
+         if (s >= 0)
+            pdev->async.fence_stream = s;
+      }
+      uint8_t dep = pdev->async.last_atom;
+      if (dep && !pdev->async.atom_bag[dep])
+         dep = 0;
+      int stream = pdev->async.fence_stream;
+      simple_mtx_unlock(&pdev->async.lock);
+      if (stream >= 0) {
+         struct kbase_base_fence fence = {
+            .fd = KBASE_INVALID_PLATFORM_FENCE, .stream_fd = stream,
+         };
+         uint64_t sq = panvk_kbase_jm_submit_trigger(pdev, dep, &fence);
+         if (sq && fence.fd >= 0) {
+            *sync_file = fence.fd;
+            return VK_SUCCESS;
+         }
+      }
    }
 
    VkResult r = kbase_cpu_sync_wait_one(device, ks, 0,

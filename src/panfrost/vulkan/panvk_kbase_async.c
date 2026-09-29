@@ -106,6 +106,8 @@ panvk_kbase_async_init(struct panvk_device *dev)
    dev->async.half_frag[0] = 0;
    dev->async.half_frag[1] = 0;
    dev->async.last_frag = 0;
+   dev->async.last_atom = 0;
+   dev->async.fence_stream = -1;
 }
 
 void
@@ -121,6 +123,10 @@ panvk_kbase_async_fini(struct panvk_device *dev)
       fprintf(stderr, "PANVKDBG overlap stats: submits=%llu max_inflight=%u\n",
               (unsigned long long)dev->async.dbg_submits,
               dev->async.dbg_max_inflight);
+   if (dev->async.fence_stream >= 0) {
+      close(dev->async.fence_stream);
+      dev->async.fence_stream = -1;
+   }
    simple_mtx_destroy(&dev->async.lock);
    dev->async.init = false;
    dev->async.enabled = false;
@@ -284,6 +290,7 @@ panvk_kbase_async_retire_bags(struct panvk_kbase_jm_bag **retired,
    for (unsigned i = 0; i < nr_retired; i++) {
       free(retired[i]->atoms);
       free(retired[i]->extres_blob);
+      free(retired[i]->fence_data);
       free(retired[i]);
    }
 }

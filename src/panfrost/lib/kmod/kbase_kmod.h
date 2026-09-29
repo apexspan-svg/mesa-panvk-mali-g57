@@ -105,6 +105,24 @@ struct pan_kmod_bo *
 kbase_kmod_bo_alloc_exportable(struct pan_kmod_dev *dev, uint64_t size,
                                uint32_t kmod_flags);
 
+/* kbase soft-fence (sync_file) support. base_fence mirrors the kernel
+ * userspace ABI: jc points at it for SOFT_FENCE_* atoms. */
+#define KBASE_JD_REQ_SOFT_JOB            (1u << 9)
+#define KBASE_JD_REQ_SOFT_FENCE_TRIGGER  (KBASE_JD_REQ_SOFT_JOB | 0x2)
+#define KBASE_JD_REQ_SOFT_FENCE_WAIT     (KBASE_JD_REQ_SOFT_JOB | 0x3)
+#define KBASE_INVALID_PLATFORM_FENCE     (-1)
+
+struct kbase_base_fence {
+   int fd;
+   int stream_fd;
+};
+
+/* Validate that fd refers to a fence (FENCE_VALIDATE). 0 = valid. */
+int kbase_kmod_fence_validate(struct pan_kmod_dev *dev, int fd);
+
+/* Create a sync timeline (STREAM_CREATE). Returns fd or -errno. */
+int kbase_kmod_stream_create(struct pan_kmod_dev *dev, const char *name);
+
 unsigned
 kbase_kmod_get_user_buffer_vas(struct pan_kmod_dev *dev,
                                uint64_t *vas, unsigned max_vas);

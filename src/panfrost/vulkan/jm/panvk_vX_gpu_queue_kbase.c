@@ -1016,10 +1016,11 @@ panvk_kbase_jm_submit_merged(struct panvk_device *dev,
 static uint64_t
 panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
                               struct panvk_kbase_jm_prepared_batch *preps,
-                              unsigned nr_preps)
+                              unsigned nr_preps,
+                              const int *wait_fds, unsigned nr_wait_fds)
 {
    struct base_jd_atom_v2 *atoms =
-      calloc(2 * nr_preps, sizeof(*atoms));
+      calloc(nr_wait_fds + 2 * nr_preps, sizeof(*atoms));
    struct base_external_resource (*extres)[BASE_EXT_RES_COUNT_MAX] =
       malloc(sizeof(*extres) * nr_preps);
    if (!atoms || !extres) {
@@ -1032,6 +1033,22 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
       free(atoms);
       free(extres);
       return 0;
+   }
+   /* base_fence array for WAIT atoms, owned by the bag (freed on retire).
+    * Must outlive builder return: the kernel reads jc at submit time. */
+   struct kbase_base_fence *fences = NULL;
+   if (nr_wait_fds) {
+      fences = calloc(nr_wait_fds, sizeof(*fences));
+      if (!fences) {
+         free(atoms);
+         free(extres);
+         free(bag);
+         return 0;
+      }
+      for (unsigned k = 0; k < nr_wait_fds; k++) {
+         fences[k].fd = wait_fds[k];
+         fences[k].stream_fd = -1;
+      }
    }
 
    simple_mtx_lock(&dev->async.lock);
@@ -1052,6 +1069,7 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
             simple_mtx_unlock(&dev->async.lock);
             free(atoms);
             free(extres);
+            free(fences);
             free(bag);
             return 0;
          }
@@ -1064,8 +1082,8 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
       }
    }
 
-   /* Reap, then ensure enough free atom ids (2 per prep worst case). If
-    * short, wait for the oldest bag and retry. */
+   /* Reap, then ensure enough free atom ids (WAIT atoms + 2 per prep
+    * worst case). If short, wait for the oldest bag and retry. */
    while (true) {
       struct panvk_kbase_jm_bag *retired[PANVK_KBASE_ASYNC_REAP_MAX];
       unsigned nr_retired = 0;
@@ -1077,7 +1095,7 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
       unsigned free_ids = 0;
       for (unsigned i = 1; i < 256; i++)
          free_ids += dev->async.atom_bag[i] == NULL;
-      if (free_ids >= 2 * nr_preps || nr_preps == 0)
+      if (free_ids >= nr_wait_fds + 2 * nr_preps)
          break;
 
       uint64_t head = 0;
@@ -1108,12 +1126,44 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
       return 0;
    }
 
-   /* Allocate ids and build. */
+   /* Allocate ids and build. WAIT atoms for imported foreign fences go
+    * first so all work chains behind them. */
    unsigned nr_atoms = 0;
    uint8_t prev_atom = 0;
    uint8_t half_frag[2] = { 0, 0 };
    bool first_vtc = true;
    bool first_frag = true;
+   for (unsigned k = 0; k < nr_wait_fds; k++) {
+      struct base_jd_atom_v2 *a = &atoms[nr_atoms];
+      memset(a, 0, sizeof(*a));
+      uint8_t id = 0;
+      for (unsigned t = 0; t < 256 && !id; t++) {
+         uint8_t cand = dev->async.next_atom++;
+         if (dev->async.next_atom == 0)
+            dev->async.next_atom = 1;
+         if (!dev->async.atom_bag[cand])
+            id = cand;
+      }
+      if (!id) {
+         simple_mtx_unlock(&dev->async.lock);
+         free(atoms);
+         free(extres);
+         free(fences);
+         free(bag);
+         return 0;
+      }
+      a->jc = (uint64_t)(uintptr_t)&fences[k];
+      a->atom_number = id;
+      a->core_req = KBASE_JD_REQ_SOFT_FENCE_WAIT;
+      if (prev_atom) {
+         a->pre_dep[0].atom_id = prev_atom;
+         a->pre_dep[0].dependency_type = 1; /* DATA */
+      }
+      dev->async.atom_bag[id] = bag;
+      dev->async.last_atom = id;
+      prev_atom = id;
+      nr_atoms++;
+   }
    for (unsigned b = 0; b < nr_preps; b++) {
       struct panvk_batch *batch = preps[b].batch;
       memcpy(extres[b], preps[b].extres, sizeof(extres[b]));
@@ -1133,6 +1183,7 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
             simple_mtx_unlock(&dev->async.lock);
             free(atoms);
             free(extres);
+            free(fences);
             free(bag);
             return 0;
          }
@@ -1161,6 +1212,7 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
             a->core_req |= BASE_JD_REQ_EXTERNAL_RESOURCES;
          }
          dev->async.atom_bag[id] = bag;
+         dev->async.last_atom = id;
          prev_atom = id;
          nr_atoms++;
       }
@@ -1180,6 +1232,7 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
             simple_mtx_unlock(&dev->async.lock);
             free(atoms);
             free(extres);
+            free(fences);
             free(bag);
             return 0;
          }
@@ -1210,6 +1263,7 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
          dev->async.atom_bag[id] = bag;
          half_frag[batch->heap_half & 1] = id;
          dev->async.last_frag = id;
+         dev->async.last_atom = id;
          prev_atom = id;
          nr_atoms++;
       }
@@ -1232,6 +1286,8 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
          bag->seqno = ++dev->async.seqno;
          bag->atoms = atoms;
          bag->extres_blob = extres;
+         bag->fence_data = fences;
+         fences = NULL;
          bag->nr_atoms = nr_atoms;
          bag->pending = nr_atoms;
          bag->failed = false;
@@ -1319,11 +1375,111 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
       simple_mtx_unlock(&dev->async.lock);
       free(atoms);
       free(extres);
+      free(fences);
       free(bag);
       return 0;
    }
    return seqno;
 }
+
+/* Submit a single SOFT_FENCE_TRIGGER atom chained after dep_atom (0 =
+ * none) and return the bag seqno, 0 on failure. The base_fence struct must
+ * outlive the ioctl; the kernel fills fence->fd during submit. Overlap
+ * mode only; caller holds no locks (all taken here). */
+/* Defined once (v9 TU); the JM file compiles per-arch (6/7/9). */
+#if PAN_ARCH == 9
+uint64_t
+panvk_kbase_jm_submit_trigger(struct panvk_device *dev, uint8_t dep_atom,
+                              struct kbase_base_fence *fence)
+{
+   struct base_jd_atom_v2 *atoms = calloc(1, sizeof(*atoms));
+   struct panvk_kbase_jm_bag *bag = calloc(1, sizeof(*bag));
+   if (!atoms || !bag) {
+      free(atoms);
+      free(bag);
+      return 0;
+   }
+
+   simple_mtx_lock(&dev->async.lock);
+   struct panvk_kbase_jm_bag *retired[PANVK_KBASE_ASYNC_REAP_MAX];
+   unsigned nr_retired = 0;
+   panvk_kbase_async_reap_locked(dev, retired, &nr_retired);
+   simple_mtx_unlock(&dev->async.lock);
+   panvk_kbase_async_retire_bags(retired, nr_retired);
+   simple_mtx_lock(&dev->async.lock);
+
+   uint8_t id = 0;
+   for (unsigned t = 0; t < 256 && !id; t++) {
+      uint8_t cand = dev->async.next_atom++;
+      if (dev->async.next_atom == 0)
+         dev->async.next_atom = 1;
+      if (!dev->async.atom_bag[cand])
+         id = cand;
+   }
+   if (!id) {
+      simple_mtx_unlock(&dev->async.lock);
+      free(atoms);
+      free(bag);
+      return 0;
+   }
+   if (dep_atom && !dev->async.atom_bag[dep_atom])
+      dep_atom = 0;
+
+   struct base_jd_atom_v2 *a = &atoms[0];
+   memset(a, 0, sizeof(*a));
+   a->jc = (uint64_t)(uintptr_t)fence;
+   a->atom_number = id;
+   a->core_req = KBASE_JD_REQ_SOFT_FENCE_TRIGGER;
+   if (dep_atom) {
+      a->pre_dep[0].atom_id = dep_atom;
+      a->pre_dep[0].dependency_type = 1; /* DATA */
+   }
+
+   struct kbase_ioctl_job_submit submit = {
+      .addr = (uint64_t)(uintptr_t)atoms,
+      .nr_atoms = 1,
+      .stride = sizeof(atoms[0]),
+   };
+   uint64_t seqno = 0;
+   int ret = pan_kmod_ioctl(dev->kmod.dev->fd, KBASE_IOCTL_JOB_SUBMIT,
+                            &submit);
+   if (ret) {
+      mesa_loge("kbase trigger: KBASE_IOCTL_JOB_SUBMIT failed: %s",
+                strerror(errno));
+      dev->async.lost = true;
+   } else {
+      bag->seqno = ++dev->async.seqno;
+      bag->atoms = atoms;
+      bag->extres_blob = NULL;
+      bag->fence_data = NULL;
+      bag->nr_atoms = 1;
+      bag->pending = 1;
+      bag->failed = false;
+      bag->done = false;
+      bag->next = NULL;
+      dev->async.atom_bag[id] = bag;
+      dev->async.last_atom = id;
+      if (dev->async.bags_tail)
+         dev->async.bags_tail->next = bag;
+      else
+         dev->async.bags_head = bag;
+      dev->async.bags_tail = bag;
+      seqno = bag->seqno;
+      bag = NULL;
+   }
+   simple_mtx_unlock(&dev->async.lock);
+   if (bag) {
+      simple_mtx_lock(&dev->async.lock);
+      if (dev->async.atom_bag[id] == bag)
+         dev->async.atom_bag[id] = NULL;
+      simple_mtx_unlock(&dev->async.lock);
+      free(atoms);
+      free(bag);
+      return 0;
+   }
+   return seqno;
+}
+#endif /* PAN_ARCH == 9 (single definition across the per-arch JM TUs) */
 
 static VkResult
 panvk_kbase_jm_build_async_bag(struct panvk_kbase_jm_prepared_batch *preps,
@@ -1467,6 +1623,25 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
        }
 
        if (want_async && mres == VK_SUCCESS) {
+          /* Imported foreign fences (if any) become GPU WAIT atoms in the
+           * first overlap chunk; other paths keep their CPU waits. */
+          int *wait_fds = NULL;
+          unsigned nr_wait_fds = 0;
+          if (dev->async.overlap && submit->wait_count) {
+             wait_fds = malloc(sizeof(*wait_fds) * submit->wait_count);
+             if (wait_fds) {
+                for (uint32_t w = 0; w < submit->wait_count; w++) {
+                   int fd = panvk_kbase_sync_get_import_fd(
+                      submit->waits[w].sync);
+                   if (fd >= 0)
+                      wait_fds[nr_wait_fds++] = fd;
+                }
+                if (!nr_wait_fds) {
+                   free(wait_fds);
+                   wait_fds = NULL;
+                }
+             }
+          }
           for (unsigned off = 0; off < filled && mres == VK_SUCCESS;) {
              unsigned n =
                 MIN2(filled - off, (unsigned)PANVK_KBASE_JM_MERGE_MAX_BATCHES);
@@ -1474,7 +1649,10 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
                 /* Pipelined overlap submit (builds + submits under the
                  * engine lock). */
                 uint64_t seqno = panvk_kbase_jm_submit_overlap(
-                   dev, &preps[off], n);
+                   dev, &preps[off], n, wait_fds, nr_wait_fds);
+                free(wait_fds);
+                wait_fds = NULL;
+                nr_wait_fds = 0;
                 if (!seqno) {
                    mres = vk_queue_set_lost(
                       vk_queue, "kbase JM overlap submission failed");
@@ -1519,6 +1697,7 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
              }
              off += n;
           }
+          free(wait_fds);
        } else {
           for (unsigned off = 0; off < filled && mres == VK_SUCCESS;) {
              unsigned n =

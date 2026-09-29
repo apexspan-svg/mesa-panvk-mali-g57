@@ -177,6 +177,28 @@ kbase_kmod_supports_dmabuf(const struct pan_kmod_dev *dev)
    return kbase_dev->dma_heap_fd >= 0;
 }
 
+int
+kbase_kmod_fence_validate(struct pan_kmod_dev *dev, int fd)
+{
+   /* nr 25 _IOW(0x80, 25, s32): 0 valid, -EINVAL invalid. Verified present
+    * on JM 11.38 (post-handshake probe). */
+   int arg = fd;
+   int ret = ioctl(dev->fd, _IOW(KBASE_IOCTL_TYPE, 25, int), &arg);
+   return ret ? -errno : 0;
+}
+
+int
+kbase_kmod_stream_create(struct pan_kmod_dev *dev, const char *name)
+{
+   /* nr 24 _IOW(0x80, 24, char[32]): returns a timeline fd. Verified
+    * working on JM 11.38. */
+   char sname[32] = { 0 };
+   if (name)
+      strncpy(sname, name, sizeof(sname) - 1);
+   int ret = ioctl(dev->fd, _IOW(KBASE_IOCTL_TYPE, 24, char[32]), sname);
+   return ret < 0 ? -errno : ret;
+}
+
 /* -------------------------------------------------------------------------
  * GPU properties blob parsing helpers
  * ---------------------------------------------------------------------- */
