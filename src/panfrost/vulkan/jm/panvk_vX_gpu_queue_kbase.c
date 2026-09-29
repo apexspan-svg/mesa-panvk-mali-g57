@@ -1036,10 +1036,38 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
 
    simple_mtx_lock(&dev->async.lock);
 
+   /* Debug throttle: serialize bags (drain first) while keeping global ids
+    * and cross-bag deps. Discriminates pipelining-depth bugs from mechanism
+    * bugs. */
+   static int serial = -1;
+   if (serial < 0)
+      serial = getenv("PANVK_OVERLAP_SERIAL") != NULL;
+   if (serial) {
+      while (dev->async.bags_head) {
+         uint64_t head = dev->async.bags_head->seqno;
+         simple_mtx_unlock(&dev->async.lock);
+         VkResult wr = panvk_kbase_async_wait_seqno(dev, head, UINT64_MAX);
+         simple_mtx_lock(&dev->async.lock);
+         if (wr != VK_SUCCESS) {
+            simple_mtx_unlock(&dev->async.lock);
+            free(atoms);
+            free(extres);
+            free(bag);
+            return 0;
+         }
+         struct panvk_kbase_jm_bag *retired[PANVK_KBASE_ASYNC_REAP_MAX];
+         unsigned nr_retired = 0;
+         panvk_kbase_async_reap_locked(dev, retired, &nr_retired);
+         simple_mtx_unlock(&dev->async.lock);
+         panvk_kbase_async_retire_bags(retired, nr_retired);
+         simple_mtx_lock(&dev->async.lock);
+      }
+   }
+
    /* Reap, then ensure enough free atom ids (2 per prep worst case). If
     * short, wait for the oldest bag and retry. */
    while (true) {
-      struct panvk_kbase_jm_bag *retired[8];
+      struct panvk_kbase_jm_bag *retired[PANVK_KBASE_ASYNC_REAP_MAX];
       unsigned nr_retired = 0;
       panvk_kbase_async_reap_locked(dev, retired, &nr_retired);
       simple_mtx_unlock(&dev->async.lock);
@@ -1085,6 +1113,7 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
    uint8_t prev_atom = 0;
    uint8_t half_frag[2] = { 0, 0 };
    bool first_vtc = true;
+   bool first_frag = true;
    for (unsigned b = 0; b < nr_preps; b++) {
       struct panvk_batch *batch = preps[b].batch;
       memcpy(extres[b], preps[b].extres, sizeof(extres[b]));
@@ -1161,6 +1190,18 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
             a->pre_dep[0].atom_id = prev_atom;
             a->pre_dep[0].dependency_type = 1; /* DATA */
          }
+         if (first_frag) {
+            /* Cross-bag edge: fragment work stays serialized across bags
+             * (matches the reference design); vertex work is what overlaps. */
+            uint8_t fid = dev->async.last_frag;
+            if (fid && !dev->async.atom_bag[fid])
+               fid = 0;
+            if (fid && fid != a->pre_dep[0].atom_id) {
+               a->pre_dep[1].atom_id = fid;
+               a->pre_dep[1].dependency_type = 1; /* DATA */
+            }
+            first_frag = false;
+         }
          if (preps[b].nr_extres) {
             a->extres_list = (uint64_t)(uintptr_t)&extres[b][0];
             a->nr_extres = preps[b].nr_extres;
@@ -1168,6 +1209,7 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
          }
          dev->async.atom_bag[id] = bag;
          half_frag[batch->heap_half & 1] = id;
+         dev->async.last_frag = id;
          prev_atom = id;
          nr_atoms++;
       }
@@ -1206,6 +1248,16 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
          }
          seqno = bag->seqno;
          bag = NULL; /* owned by the engine now */
+         if (unlikely(getenv("PANVK_VERBOSE"))) {
+            unsigned inflight = 0;
+            for (struct panvk_kbase_jm_bag *bb = dev->async.bags_head;
+                 bb; bb = bb->next)
+               inflight++;
+            fprintf(stderr,
+                    "PANVKDBG ovsubmit seq=%llu atoms=%u inflight=%u halves=%u,%u\n",
+                    (unsigned long long)seqno, nr_atoms, inflight,
+                    dev->async.half_frag[0], dev->async.half_frag[1]);
+         }
       }
    } else {
       /* No GPU work: link an already-done bag so sequencing stays exact. */
@@ -1222,12 +1274,27 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
       else
          dev->async.bags_head = bag;
       dev->async.bags_tail = bag;
-      seqno = bag->seqno;
-      bag = NULL;
+         seqno = bag->seqno;
+         bag = NULL;
+   }
+   {
+      unsigned inflight = 0;
+      for (struct panvk_kbase_jm_bag *bb = dev->async.bags_head;
+           bb; bb = bb->next)
+         inflight++;
+      dev->async.dbg_submits++;
+      if (inflight > dev->async.dbg_max_inflight)
+         dev->async.dbg_max_inflight = inflight;
+      if ((dev->async.dbg_submits % 300) == 0) {
+         fprintf(stderr,
+                 "PANVKDBG ovstats submits=%llu max_inflight=%u\n",
+                 (unsigned long long)dev->async.dbg_submits,
+                 dev->async.dbg_max_inflight);
+      }
    }
    /* Advance already-done bags synchronously: empty bags generate no JD
     * events, so no future reap would ever retire them. */
-   struct panvk_kbase_jm_bag *retired[4];
+   struct panvk_kbase_jm_bag *retired[PANVK_KBASE_ASYNC_REAP_MAX];
    unsigned nr_retired = 0;
    while (dev->async.bags_head && dev->async.bags_head->done &&
           nr_retired < ARRAY_SIZE(retired)) {

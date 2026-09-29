@@ -160,10 +160,22 @@ struct panvk_device {
       uint8_t next_atom;
       /* Last submitted frag atom per tiler heap half (0 = none/stale). */
       uint8_t half_frag[2];
+      /* Last submitted frag atom overall (0 = none/stale): the next bag's
+       * first fragment waits for it, keeping frag work serialized across
+       * bags while vertex work overlaps. */
+      uint8_t last_frag;
+      /* Debug counters (overlap mode). */
+      uint64_t dbg_submits;
+      unsigned dbg_max_inflight;
    } async;
 };
 
 VK_DEFINE_HANDLE_CASTS(panvk_device, vk.base, VkDevice, VK_OBJECT_TYPE_DEVICE)
+
+/* Max bags retired per reap call. Callers must size retired[] accordingly. */
+enum {
+   PANVK_KBASE_ASYNC_REAP_MAX = 32,
+};
 
 /* kbase JM async submission engine (panvk_kbase_async.c). All functions are
  * safe to call on any KMD; they no-ops unless the device runs on kbase with

@@ -105,6 +105,7 @@ panvk_kbase_async_init(struct panvk_device *dev)
    dev->async.next_atom = 1;
    dev->async.half_frag[0] = 0;
    dev->async.half_frag[1] = 0;
+   dev->async.last_frag = 0;
 }
 
 void
@@ -116,6 +117,10 @@ panvk_kbase_async_fini(struct panvk_device *dev)
    /* Drain anything still flying, then tear down. Device destroy with
     * pending work is an app bug; block rather than leak. */
    panvk_kbase_async_drain(dev);
+   if (dev->async.overlap && dev->async.dbg_submits)
+      fprintf(stderr, "PANVKDBG overlap stats: submits=%llu max_inflight=%u\n",
+              (unsigned long long)dev->async.dbg_submits,
+              dev->async.dbg_max_inflight);
    simple_mtx_destroy(&dev->async.lock);
    dev->async.init = false;
    dev->async.enabled = false;
@@ -191,8 +196,11 @@ async_reap_locked(struct panvk_device *dev,
          bag->done = true;
 
       /* Advance contiguous completion from the head; stale half_frag ids
-       * are scrubbed so later deps only reference in-flight atoms. */
-      while (dev->async.bags_head && dev->async.bags_head->done) {
+       * are scrubbed so later deps only reference in-flight atoms. Bounded
+       * per call: callers size retired[] for ASYNC_REAP_MAX. */
+      unsigned advanced = 0;
+      while (dev->async.bags_head && dev->async.bags_head->done &&
+             advanced < PANVK_KBASE_ASYNC_REAP_MAX) {
          struct panvk_kbase_jm_bag *head = dev->async.bags_head;
          dev->async.bags_head = head->next;
          if (!dev->async.bags_head)
@@ -206,7 +214,13 @@ async_reap_locked(struct panvk_device *dev,
             if (id && !dev->async.atom_bag[id])
                dev->async.half_frag[h] = 0;
          }
+         {
+            uint8_t id = dev->async.last_frag;
+            if (id && !dev->async.atom_bag[id])
+               dev->async.last_frag = 0;
+         }
          retired[(*nr_retired)++] = head;
+         advanced++;
       }
    }
 
@@ -308,7 +322,7 @@ panvk_kbase_async_submit(struct panvk_device *dev, void *atoms,
       return 0;
    }
 
-   struct panvk_kbase_jm_bag *retired[1];
+   struct panvk_kbase_jm_bag *retired[PANVK_KBASE_ASYNC_REAP_MAX];
    unsigned nr_retired;
 
    simple_mtx_lock(&dev->async.lock);
@@ -379,7 +393,7 @@ panvk_kbase_async_wait_seqno(struct panvk_device *dev, uint64_t seqno,
    if (!dev->async.init || !dev->async.enabled)
       return VK_SUCCESS;
 
-   struct panvk_kbase_jm_bag *retired[1];
+   struct panvk_kbase_jm_bag *retired[PANVK_KBASE_ASYNC_REAP_MAX];
    unsigned nr_retired;
 
    simple_mtx_lock(&dev->async.lock);
@@ -392,25 +406,15 @@ panvk_kbase_async_wait_seqno(struct panvk_device *dev, uint64_t seqno,
          simple_mtx_unlock(&dev->async.lock);
          return VK_SUCCESS;
       }
-      /* Overlap mode: the target bag may still be listed but already done,
-       * or fully retired (absent from the list). */
-      struct panvk_kbase_jm_bag *target = NULL;
-      for (struct panvk_kbase_jm_bag *b = dev->async.bags_head; b;
-           b = b->next) {
-         if (b->seqno == seqno) {
-            target = b;
-            break;
-         }
-      }
-      if (!target && !dev->async.bag) {
+      /* Overlap mode: only the contiguous completed_seqno proves completion.
+       * A listed-but-done bag is not sufficient (older bags may still fly
+       * after out-of-order completion). An absent sequence with nothing in
+       * flight completed through another path. */
+      if (!dev->async.bag && !dev->async.bags_head) {
          /* Nothing in flight but the sequence hasn't retired: it must
           * have completed through another path; treat as done. */
          simple_mtx_unlock(&dev->async.lock);
          return VK_SUCCESS;
-      }
-      if (target && target->done) {
-         simple_mtx_unlock(&dev->async.lock);
-         return dev->async.lost ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
       }
 
       int timeout_ms;
