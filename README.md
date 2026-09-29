@@ -1,5 +1,8 @@
 # Mesa PanVK Mali-G57 — kbase JM / Android
 
+> [!IMPORTANT]
+> **Latest marks *(Update)* — [`v1.2.0` release](https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/tag/v1.2.0):** vkmark 640x480 immediate **248** · glmark2/Zink (mailbox) **132** · WebGL aquarium 500 fish **51.5 fps** — Mali-G57 MC2, all runs exit `0`. Prebuilt balls + md5sums on the [release page](https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/tag/v1.2.0); full source: branch [`g57-overlap-stage2`](https://github.com/apexspan-svg/mesa-panvk-mali-g57/tree/g57-overlap-stage2).
+
 Experimental Mesa PanVK Vulkan driver for **ARM Mali-G57 MC2 / Valhall** using the Arm **kbase JM (Job Manager)** interface on Android / Termux.
 
 > [!NOTE]
