@@ -856,6 +856,20 @@ panvk_kbase_jm_submit_batch(struct panvk_gpu_queue *queue,
    return panvk_kbase_jm_submit_prepared(dev, &prep);
 }
 
+/* Heap-split overlap (PANVK_OVERLAP=1, default off): consecutive batches use
+ * disjoint tiler heap halves so a vertex job only waits for the fragment job
+ * that owns its half. Mirrors the FristOneRR v67b design (within one bag). */
+static bool
+panvk_overlap_enabled(void)
+{
+   static int on = -1;
+   if (on < 0) {
+      const char *e = getenv("PANVK_OVERLAP");
+      on = (e && e[0] != '0') ? 1 : 0;
+   }
+   return on != 0;
+}
+
 /* Maximum batches merged into one job bag. Each batch contributes up to two
  * atoms; atom numbers are bytes and the wait path tracks 256 of them. */
 #define PANVK_KBASE_JM_MERGE_MAX_BATCHES 120
@@ -883,6 +897,10 @@ panvk_kbase_jm_submit_merged(struct panvk_device *dev,
 
    unsigned nr_atoms = 0;
    uint8_t prev_atom = 0;
+   /* Heap-split overlap: last frag atom per heap half, valid within this bag.
+    * A vertex job only waits for the fragment job that owns its half. */
+   const bool overlap = panvk_overlap_enabled();
+   uint8_t half_frag[2] = { 0, 0 };
    for (unsigned b = 0; b < nr_preps; b++) {
       struct panvk_batch *batch = preps[b].batch;
 
@@ -893,7 +911,13 @@ panvk_kbase_jm_submit_merged(struct panvk_device *dev,
          a->atom_number = nr_atoms + 1;
          a->core_req = preps[b].vtc_core;
          if (prev_atom) {
-            a->pre_dep[0].atom_id = prev_atom;
+            uint8_t dep = prev_atom;
+            if (overlap && batch->frag_jc.first_job) {
+               uint8_t h = half_frag[batch->heap_half & 1];
+               if (h)
+                  dep = h;
+            }
+            a->pre_dep[0].atom_id = dep;
             a->pre_dep[0].dependency_type = 1; /* DATA */
          }
          if (preps[b].nr_extres) {
@@ -922,6 +946,8 @@ panvk_kbase_jm_submit_merged(struct panvk_device *dev,
             a->core_req |= BASE_JD_REQ_EXTERNAL_RESOURCES;
          }
          atom_batch[nr_atoms] = batch;
+         if (overlap)
+            half_frag[batch->heap_half & 1] = a->atom_number;
          prev_atom = a->atom_number;
          nr_atoms++;
       }
@@ -1000,6 +1026,9 @@ panvk_kbase_jm_build_async_bag(struct panvk_kbase_jm_prepared_batch *preps,
 
    unsigned nr_atoms = 0;
    uint8_t prev_atom = 0;
+   /* Heap-split overlap, same as the merged path (valid within this bag). */
+   const bool overlap = panvk_overlap_enabled();
+   uint8_t half_frag[2] = { 0, 0 };
    for (unsigned b = 0; b < nr_preps; b++) {
       struct panvk_batch *batch = preps[b].batch;
       memcpy(extres[b], preps[b].extres, sizeof(extres[b]));
@@ -1011,7 +1040,13 @@ panvk_kbase_jm_build_async_bag(struct panvk_kbase_jm_prepared_batch *preps,
          a->atom_number = nr_atoms + 1;
          a->core_req = preps[b].vtc_core;
          if (prev_atom) {
-            a->pre_dep[0].atom_id = prev_atom;
+            uint8_t dep = prev_atom;
+            if (overlap && batch->frag_jc.first_job) {
+               uint8_t h = half_frag[batch->heap_half & 1];
+               if (h)
+                  dep = h;
+            }
+            a->pre_dep[0].atom_id = dep;
             a->pre_dep[0].dependency_type = 1; /* DATA */
          }
          if (preps[b].nr_extres) {
@@ -1038,6 +1073,8 @@ panvk_kbase_jm_build_async_bag(struct panvk_kbase_jm_prepared_batch *preps,
             a->nr_extres = preps[b].nr_extres;
             a->core_req |= BASE_JD_REQ_EXTERNAL_RESOURCES;
          }
+         if (overlap)
+            half_frag[batch->heap_half & 1] = a->atom_number;
          prev_atom = a->atom_number;
          nr_atoms++;
       }

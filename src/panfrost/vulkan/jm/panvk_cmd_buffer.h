@@ -60,6 +60,10 @@ struct panvk_batch {
    struct pan_tls_info tlsinfo;
    unsigned wls_total_size;
    bool issued;
+   /* Heap-split overlap: which tiler heap half this batch uses (assigned at
+    * record time, alternating). Lets a later batch's vertex job depend only
+    * on the fragment job that used the same half. */
+   unsigned heap_half;
 };
 
 enum panvk_cmd_event_op_type {
