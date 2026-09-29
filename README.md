@@ -231,6 +231,12 @@ vkmark --winsys xcb -s 640x480 -p immediate
 
 ---
 
+## Known Issues (do not forget)
+
+* **MRT masked-attachment preserve is broken.** An attachment bound with `loadOp LOAD` + `colorWriteMask = 0` comes back zeroed instead of preserved — `colorWriteMask` is currently unhandled driver-wide (tile store writes zero-initialized data for masked channels). Repro: [Noysz `mrt_alias_test`](https://github.com/Noysz/panvk-g99-jm) (`ALIASFP mask … FAIL`, ~4000/16384 bytes clobbered; fails identically on sync/async/overlap paths, so pre-existing and unrelated to pipelining). The FristOneRR build fails the same test harder (renders nothing, `rt0=0`). Rare in real content — nothing shipped hits it — but the repro is kept built as a regression gate.
+
+---
+
 ## Building from Source (Developers)
 
 If you prefer to compile Mesa and PanVK manually from source:
