@@ -235,7 +235,6 @@ vkmark --winsys xcb -s 640x480 -p immediate
 
 * **MRT masked-attachment preserve is broken.** An attachment bound with `loadOp LOAD` + `colorWriteMask = 0` comes back zeroed instead of preserved — `colorWriteMask` is currently unhandled driver-wide (tile store writes zero-initialized data for masked channels). Repro: [Noysz `mrt_alias_test`](https://github.com/Noysz/panvk-g99-jm) (`ALIASFP mask … FAIL`, ~4000/16384 bytes clobbered; fails identically on sync/async/overlap paths, so pre-existing and unrelated to pipelining). The FristOneRR build fails the same test harder (renders nothing, `rt0=0`). Rare in real content — nothing shipped hits it — but the repro is kept built as a regression gate.
 * **Occlusion queries overcount.** A query scoped to zero covered samples reports full-triangle counts (`tri_a`: host = dev = 512, expected 0). Repro: Noysz `occlusion_query_test`; fails identically with overlap off, so pre-existing. Affects occlusion culling accuracy in real content (overdraw, not corruption).
-* **Cross-driver note (Noysz suite, Sep 2026):** failures are almost perfectly complementary — ours draws (triangle/indexed/indirect/fill/descriptors all pass) but miscounts queries and clobbers masked MRT; theirs passes occlusion but draws nothing in triangle/indexed/indirect/fill/descriptor/shape tests. Different pipeline subsets correct on each side; shared repros make future fixes verifiable both ways.
 
 ---
 
