@@ -1007,6 +1007,257 @@ panvk_kbase_jm_submit_merged(struct panvk_device *dev,
  * of both passes to the caller (handed to the async engine, freed on
  * retirement). Every atom depends on the previous one, preserving submit
  * order exactly. */
+/* Overlap submitter (PANVK_OVERLAP=1 on top of PANVK_ASYNC=1): build the bag,
+ * assign globally-unique atom ids, wire the first vertex atom's second
+ * dependency to the in-flight fragment atom owning its tiler heap half, and
+ * submit — all under the async lock so cross-bag state stays ordered.
+ * Within-bag edges mirror the merged path. Returns the bag seqno, 0 on
+ * failure (caller must mark the device lost). */
+static uint64_t
+panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
+                              struct panvk_kbase_jm_prepared_batch *preps,
+                              unsigned nr_preps)
+{
+   struct base_jd_atom_v2 *atoms =
+      calloc(2 * nr_preps, sizeof(*atoms));
+   struct base_external_resource (*extres)[BASE_EXT_RES_COUNT_MAX] =
+      malloc(sizeof(*extres) * nr_preps);
+   if (!atoms || !extres) {
+      free(atoms);
+      free(extres);
+      return 0;
+   }
+   struct panvk_kbase_jm_bag *bag = calloc(1, sizeof(*bag));
+   if (!bag) {
+      free(atoms);
+      free(extres);
+      return 0;
+   }
+
+   simple_mtx_lock(&dev->async.lock);
+
+   /* Reap, then ensure enough free atom ids (2 per prep worst case). If
+    * short, wait for the oldest bag and retry. */
+   while (true) {
+      struct panvk_kbase_jm_bag *retired[8];
+      unsigned nr_retired = 0;
+      panvk_kbase_async_reap_locked(dev, retired, &nr_retired);
+      simple_mtx_unlock(&dev->async.lock);
+      panvk_kbase_async_retire_bags(retired, nr_retired);
+      simple_mtx_lock(&dev->async.lock);
+
+      unsigned free_ids = 0;
+      for (unsigned i = 1; i < 256; i++)
+         free_ids += dev->async.atom_bag[i] == NULL;
+      if (free_ids >= 2 * nr_preps || nr_preps == 0)
+         break;
+
+      uint64_t head = 0;
+      if (dev->async.bag)
+         head = dev->async.bag->seqno;
+      else if (dev->async.bags_head)
+         head = dev->async.bags_head->seqno;
+      simple_mtx_unlock(&dev->async.lock);
+      if (!head) {
+         simple_mtx_lock(&dev->async.lock);
+         continue;
+      }
+      VkResult wr = panvk_kbase_async_wait_seqno(dev, head, UINT64_MAX);
+      if (wr != VK_SUCCESS) {
+         free(atoms);
+         free(extres);
+         free(bag);
+         return 0;
+      }
+      simple_mtx_lock(&dev->async.lock);
+   }
+
+   if (dev->async.lost) {
+      simple_mtx_unlock(&dev->async.lock);
+      free(atoms);
+      free(extres);
+      free(bag);
+      return 0;
+   }
+
+   /* Allocate ids and build. */
+   unsigned nr_atoms = 0;
+   uint8_t prev_atom = 0;
+   uint8_t half_frag[2] = { 0, 0 };
+   bool first_vtc = true;
+   for (unsigned b = 0; b < nr_preps; b++) {
+      struct panvk_batch *batch = preps[b].batch;
+      memcpy(extres[b], preps[b].extres, sizeof(extres[b]));
+
+      if (batch->vtc_jc.first_job) {
+         struct base_jd_atom_v2 *a = &atoms[nr_atoms];
+         memset(a, 0, sizeof(*a));
+         uint8_t id = 0;
+         for (unsigned t = 0; t < 256 && !id; t++) {
+            uint8_t cand = dev->async.next_atom++;
+            if (dev->async.next_atom == 0)
+               dev->async.next_atom = 1;
+            if (!dev->async.atom_bag[cand])
+               id = cand;
+         }
+         if (!id) {
+            simple_mtx_unlock(&dev->async.lock);
+            free(atoms);
+            free(extres);
+            free(bag);
+            return 0;
+         }
+         a->jc = batch->vtc_jc.first_job;
+         a->atom_number = id;
+         a->core_req = preps[b].vtc_core;
+         if (prev_atom) {
+            a->pre_dep[0].atom_id = prev_atom;
+            a->pre_dep[0].dependency_type = 1; /* DATA */
+         }
+         if (first_vtc && batch->frag_jc.first_job) {
+            /* Cross-bag edge: wait only for the in-flight fragment job
+             * that owns this batch's heap half (0 = none/stale). */
+            uint8_t hid = dev->async.half_frag[batch->heap_half & 1];
+            if (hid && !dev->async.atom_bag[hid])
+               hid = 0;
+            if (hid && hid != a->pre_dep[0].atom_id) {
+               a->pre_dep[1].atom_id = hid;
+               a->pre_dep[1].dependency_type = 1; /* DATA */
+            }
+            first_vtc = false;
+         }
+         if (preps[b].nr_extres) {
+            a->extres_list = (uint64_t)(uintptr_t)&extres[b][0];
+            a->nr_extres = preps[b].nr_extres;
+            a->core_req |= BASE_JD_REQ_EXTERNAL_RESOURCES;
+         }
+         dev->async.atom_bag[id] = bag;
+         prev_atom = id;
+         nr_atoms++;
+      }
+
+      if (batch->frag_jc.first_job) {
+         struct base_jd_atom_v2 *a = &atoms[nr_atoms];
+         memset(a, 0, sizeof(*a));
+         uint8_t id = 0;
+         for (unsigned t = 0; t < 256 && !id; t++) {
+            uint8_t cand = dev->async.next_atom++;
+            if (dev->async.next_atom == 0)
+               dev->async.next_atom = 1;
+            if (!dev->async.atom_bag[cand])
+               id = cand;
+         }
+         if (!id) {
+            simple_mtx_unlock(&dev->async.lock);
+            free(atoms);
+            free(extres);
+            free(bag);
+            return 0;
+         }
+         a->jc = batch->frag_jc.first_job;
+         a->atom_number = id;
+         a->core_req = preps[b].frag_core;
+         if (prev_atom) {
+            a->pre_dep[0].atom_id = prev_atom;
+            a->pre_dep[0].dependency_type = 1; /* DATA */
+         }
+         if (preps[b].nr_extres) {
+            a->extres_list = (uint64_t)(uintptr_t)&extres[b][0];
+            a->nr_extres = preps[b].nr_extres;
+            a->core_req |= BASE_JD_REQ_EXTERNAL_RESOURCES;
+         }
+         dev->async.atom_bag[id] = bag;
+         half_frag[batch->heap_half & 1] = id;
+         prev_atom = id;
+         nr_atoms++;
+      }
+   }
+
+   uint64_t seqno = 0;
+   if (nr_atoms) {
+      struct kbase_ioctl_job_submit submit = {
+         .addr = (uint64_t)(uintptr_t)atoms,
+         .nr_atoms = nr_atoms,
+         .stride = sizeof(atoms[0]),
+      };
+      int ret = pan_kmod_ioctl(dev->kmod.dev->fd, KBASE_IOCTL_JOB_SUBMIT,
+                               &submit);
+      if (ret) {
+         mesa_loge("kbase overlap: KBASE_IOCTL_JOB_SUBMIT failed: %s",
+                   strerror(errno));
+         dev->async.lost = true;
+      } else {
+         bag->seqno = ++dev->async.seqno;
+         bag->atoms = atoms;
+         bag->extres_blob = extres;
+         bag->nr_atoms = nr_atoms;
+         bag->pending = nr_atoms;
+         bag->failed = false;
+         bag->done = false;
+         bag->next = NULL;
+         if (dev->async.bags_tail)
+            dev->async.bags_tail->next = bag;
+         else
+            dev->async.bags_head = bag;
+         dev->async.bags_tail = bag;
+         for (unsigned h = 0; h < 2; h++) {
+            if (half_frag[h])
+               dev->async.half_frag[h] = half_frag[h];
+         }
+         seqno = bag->seqno;
+         bag = NULL; /* owned by the engine now */
+      }
+   } else {
+      /* No GPU work: link an already-done bag so sequencing stays exact. */
+      bag->seqno = ++dev->async.seqno;
+      bag->atoms = atoms;
+      bag->extres_blob = extres;
+      bag->nr_atoms = 0;
+      bag->pending = 0;
+      bag->failed = false;
+      bag->done = true;
+      bag->next = NULL;
+      if (dev->async.bags_tail)
+         dev->async.bags_tail->next = bag;
+      else
+         dev->async.bags_head = bag;
+      dev->async.bags_tail = bag;
+      seqno = bag->seqno;
+      bag = NULL;
+   }
+   /* Advance already-done bags synchronously: empty bags generate no JD
+    * events, so no future reap would ever retire them. */
+   struct panvk_kbase_jm_bag *retired[4];
+   unsigned nr_retired = 0;
+   while (dev->async.bags_head && dev->async.bags_head->done &&
+          nr_retired < ARRAY_SIZE(retired)) {
+      struct panvk_kbase_jm_bag *head = dev->async.bags_head;
+      dev->async.bags_head = head->next;
+      if (!dev->async.bags_head)
+         dev->async.bags_tail = NULL;
+      if (head->seqno > dev->async.completed_seqno)
+         dev->async.completed_seqno = head->seqno;
+      retired[nr_retired++] = head;
+   }
+   simple_mtx_unlock(&dev->async.lock);
+   panvk_kbase_async_retire_bags(retired, nr_retired);
+
+   if (bag) {
+      /* ioctl failed: release the reserved ids. */
+      simple_mtx_lock(&dev->async.lock);
+      for (unsigned i = 1; i < 256; i++) {
+         if (dev->async.atom_bag[i] == bag)
+            dev->async.atom_bag[i] = NULL;
+      }
+      simple_mtx_unlock(&dev->async.lock);
+      free(atoms);
+      free(extres);
+      free(bag);
+      return 0;
+   }
+   return seqno;
+}
+
 static VkResult
 panvk_kbase_jm_build_async_bag(struct panvk_kbase_jm_prepared_batch *preps,
                                unsigned nr_preps,
@@ -1152,6 +1403,24 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
           for (unsigned off = 0; off < filled && mres == VK_SUCCESS;) {
              unsigned n =
                 MIN2(filled - off, (unsigned)PANVK_KBASE_JM_MERGE_MAX_BATCHES);
+             if (dev->async.overlap) {
+                /* Pipelined overlap submit (builds + submits under the
+                 * engine lock). */
+                uint64_t seqno = panvk_kbase_jm_submit_overlap(
+                   dev, &preps[off], n);
+                if (!seqno) {
+                   mres = vk_queue_set_lost(
+                      vk_queue, "kbase JM overlap submission failed");
+                   break;
+                }
+                async_seqno = seqno;
+                for (unsigned b = off; b < off + n; b++) {
+                   preps[b].batch->issued = true;
+                   preps[b].cmdbuf->async_seqno = async_seqno;
+                }
+                off += n;
+                continue;
+             }
              struct base_jd_atom_v2 *atoms = NULL;
              void *extres_blob = NULL;
              unsigned nr_atoms = 0;

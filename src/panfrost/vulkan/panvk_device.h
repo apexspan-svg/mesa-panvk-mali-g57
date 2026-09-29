@@ -137,28 +137,51 @@ struct panvk_device {
    int drm_fd;
 
    /* kbase JM async submission engine state (panvk_kbase_async.c).
-    * Submissions are serialized per device (at most one bag in flight),
-    * so completion is contiguous and waiters use sequence numbers only.
-    * Active only on kbase with PANVK_ASYNC=1; the engine no-ops otherwise. */
+    * With plain PANVK_ASYNC=1, submissions are serialized per device (at
+    * most one bag in flight). With PANVK_OVERLAP=1 additionally set, bags
+    * pipeline: atoms carry globally-unique ids (0 = none) and a later bag's
+    * vertex job depends on the in-flight fragment job owning its tiler
+    * heap half. Active only on kbase with PANVK_ASYNC=1. */
    struct {
       simple_mtx_t lock;
       bool init;
       bool enabled;
       bool lost;
+      bool overlap;
       uint64_t seqno;
       uint64_t completed_seqno;
-      /* The single outstanding bag, NULL when idle. Owned by the engine;
-       * fields below are valid only while holding lock. */
+      /* The single outstanding bag (non-overlap mode), NULL when idle. */
       struct panvk_kbase_jm_bag *bag;
+      /* Overlap mode: in-flight bags in submit order. */
+      struct panvk_kbase_jm_bag *bags_head;
+      struct panvk_kbase_jm_bag *bags_tail;
+      /* Atom id -> owning bag (ids 1..255, 0 = free). */
+      struct panvk_kbase_jm_bag *atom_bag[256];
+      uint8_t next_atom;
+      /* Last submitted frag atom per tiler heap half (0 = none/stale). */
+      uint8_t half_frag[2];
    } async;
 };
 
 VK_DEFINE_HANDLE_CASTS(panvk_device, vk.base, VkDevice, VK_OBJECT_TYPE_DEVICE)
 
 /* kbase JM async submission engine (panvk_kbase_async.c). All functions are
- * safe to call on any KMD; they no-op unless the device runs on kbase with
- * PANVK_ASYNC=1. Sequence numbers identify submitted bags; 0 means none. */
-struct panvk_kbase_jm_bag;
+ * safe to call on any KMD; they no-ops unless the device runs on kbase with
+ * PANVK_ASYNC=1. Sequence numbers identify submitted bags; 0 means none.
+ *
+ * Overlap mode (PANVK_OVERLAP=1 on top of PANVK_ASYNC=1) pipelines bags:
+ * atoms carry globally-unique ids and per-bag retirement is attributed via
+ * atom_bag[]. The single-bag `bag` field is unused in overlap mode. */
+struct panvk_kbase_jm_bag {
+   uint64_t seqno;
+   void *atoms;
+   void *extres_blob;
+   unsigned nr_atoms;
+   unsigned pending;
+   bool failed;
+   bool done;
+   struct panvk_kbase_jm_bag *next;
+};
 
 void panvk_kbase_async_init(struct panvk_device *dev);
 void panvk_kbase_async_fini(struct panvk_device *dev);
@@ -180,6 +203,19 @@ VkResult panvk_kbase_async_wait_seqno(struct panvk_device *dev,
 
 /* Block until nothing is in flight. */
 VkResult panvk_kbase_async_drain(struct panvk_device *dev);
+
+/* Consume pending JD events and retire completed bags. Lock must be held;
+ * retired bags are appended to `retired` (free with async_retire_bags). */
+void panvk_kbase_async_reap_locked(struct panvk_device *dev,
+                                   struct panvk_kbase_jm_bag **retired,
+                                   unsigned *nr_retired);
+
+/* Free retired bags (no lock needed). */
+void panvk_kbase_async_retire_bags(struct panvk_kbase_jm_bag **retired,
+                                   unsigned nr_retired);
+
+/* Oldest in-flight sequence number, 0 when idle (single-bag or list). */
+uint64_t panvk_kbase_async_head_seqno(struct panvk_device *dev);
 
 /* True if any bag is currently in flight (nonblocking check). */
 bool panvk_kbase_async_busy(struct panvk_device *dev);

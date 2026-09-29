@@ -75,13 +75,8 @@ struct panvk_kbase_jm_submit_ioctl {
 #define PANVK_KBASE_IOCTL_JOB_SUBMIT \
    _IOW(0x80, 2, struct panvk_kbase_jm_submit_ioctl)
 
-struct panvk_kbase_jm_bag {
-   uint64_t seqno;
-   void *atoms;
-   void *extres_blob;
-   unsigned pending;
-   bool failed;
-};
+/* Single-bag state lives in dev->async (see panvk_device.h); the bag struct
+ * itself is defined there too (shared with the overlap submitter). */
 
 static bool
 kbase_async_is_kbase(struct panvk_device *dev)
@@ -98,9 +93,18 @@ panvk_kbase_async_init(struct panvk_device *dev)
    dev->async.enabled =
       kbase_async_is_kbase(dev) && getenv("PANVK_ASYNC") != NULL;
    dev->async.lost = false;
+   dev->async.overlap =
+      kbase_async_is_kbase(dev) && getenv("PANVK_OVERLAP") != NULL &&
+      getenv("PANVK_OVERLAP")[0] != '0';
    dev->async.seqno = 0;
    dev->async.completed_seqno = 0;
    dev->async.bag = NULL;
+   dev->async.bags_head = NULL;
+   dev->async.bags_tail = NULL;
+   memset(dev->async.atom_bag, 0, sizeof(dev->async.atom_bag));
+   dev->async.next_atom = 1;
+   dev->async.half_frag[0] = 0;
+   dev->async.half_frag[1] = 0;
 }
 
 void
@@ -132,20 +136,81 @@ panvk_kbase_async_busy(struct panvk_device *dev)
       return false;
 
    simple_mtx_lock(&dev->async.lock);
-   busy = dev->async.bag != NULL;
+   busy = dev->async.bag != NULL || dev->async.bags_head != NULL;
    simple_mtx_unlock(&dev->async.lock);
 
    return busy;
 }
 
-/* Consume all immediately-available JD events, retiring the outstanding bag
- * when its atoms complete. Called with the lock held; never blocks.
- * Retired bags are returned through the list for freeing outside the lock. */
+/* Consume all immediately-available JD events, retiring completed bags.
+ * Called with the lock held; never blocks. Retired bags are returned
+ * through the list for freeing outside the lock. */
 static void
 async_reap_locked(struct panvk_device *dev,
                   struct panvk_kbase_jm_bag **retired,
                   unsigned *nr_retired)
 {
+   /* Overlap mode: attribute events by global atom id, advance contiguous
+    * completion from the list head. */
+   while (dev->async.bags_head) {
+      struct pollfd pfd = {
+         .fd = dev->kmod.dev->fd,
+         .events = POLLIN,
+      };
+      int ret = poll(&pfd, 1, 0);
+      if (ret < 0 && errno == EINTR)
+         continue;
+      if (ret <= 0 || !(pfd.revents & POLLIN))
+         break;
+
+      struct panvk_kbase_jd_event ev;
+      ssize_t len = read(dev->kmod.dev->fd, &ev, sizeof(ev));
+      if (len < 0 && (errno == EINTR || errno == EAGAIN))
+         continue;
+      if (len != sizeof(ev)) {
+         mesa_loge("kbase async: invalid JD event read length %zd", len);
+         dev->async.lost = true;
+         break;
+      }
+
+      struct panvk_kbase_jm_bag *bag = NULL;
+      if (ev.atom_number != 0)
+         bag = dev->async.atom_bag[ev.atom_number];
+      if (!bag || bag->pending == 0)
+         continue;
+      dev->async.atom_bag[ev.atom_number] = NULL;
+
+      if (ev.event_code != PANVK_KBASE_JD_EVENT_DONE) {
+         mesa_loge("kbase async: atom %u failed with JD event 0x%02x",
+                   ev.atom_number, ev.event_code);
+         bag->failed = true;
+      }
+
+      bag->pending--;
+      if (bag->pending == 0)
+         bag->done = true;
+
+      /* Advance contiguous completion from the head; stale half_frag ids
+       * are scrubbed so later deps only reference in-flight atoms. */
+      while (dev->async.bags_head && dev->async.bags_head->done) {
+         struct panvk_kbase_jm_bag *head = dev->async.bags_head;
+         dev->async.bags_head = head->next;
+         if (!dev->async.bags_head)
+            dev->async.bags_tail = NULL;
+         if (head->failed)
+            dev->async.lost = true;
+         if (head->seqno > dev->async.completed_seqno)
+            dev->async.completed_seqno = head->seqno;
+         for (unsigned h = 0; h < 2; h++) {
+            uint8_t id = dev->async.half_frag[h];
+            if (id && !dev->async.atom_bag[id])
+               dev->async.half_frag[h] = 0;
+         }
+         retired[(*nr_retired)++] = head;
+      }
+   }
+
+   /* Non-overlap single-bag path (unchanged). */
    while (dev->async.bag) {
       struct pollfd pfd = {
          .fd = dev->kmod.dev->fd,
@@ -190,14 +255,42 @@ async_reap_locked(struct panvk_device *dev,
    }
 }
 
-static void
-async_retire(struct panvk_kbase_jm_bag **retired, unsigned nr_retired)
+void
+panvk_kbase_async_reap_locked(struct panvk_device *dev,
+                              struct panvk_kbase_jm_bag **retired,
+                              unsigned *nr_retired)
+{
+   async_reap_locked(dev, retired, nr_retired);
+}
+
+void
+panvk_kbase_async_retire_bags(struct panvk_kbase_jm_bag **retired,
+                              unsigned nr_retired)
 {
    for (unsigned i = 0; i < nr_retired; i++) {
       free(retired[i]->atoms);
       free(retired[i]->extres_blob);
       free(retired[i]);
    }
+}
+
+uint64_t
+panvk_kbase_async_head_seqno(struct panvk_device *dev)
+{
+   uint64_t s = 0;
+   simple_mtx_lock(&dev->async.lock);
+   if (dev->async.bag)
+      s = dev->async.bag->seqno;
+   else if (dev->async.bags_head)
+      s = dev->async.bags_head->seqno;
+   simple_mtx_unlock(&dev->async.lock);
+   return s;
+}
+
+static void
+async_retire(struct panvk_kbase_jm_bag **retired, unsigned nr_retired)
+{
+   panvk_kbase_async_retire_bags(retired, nr_retired);
 }
 
 /* Submit a bag without waiting. Takes ownership of the atoms/extres memory
@@ -299,11 +392,25 @@ panvk_kbase_async_wait_seqno(struct panvk_device *dev, uint64_t seqno,
          simple_mtx_unlock(&dev->async.lock);
          return VK_SUCCESS;
       }
-      if (!dev->async.bag) {
+      /* Overlap mode: the target bag may still be listed but already done,
+       * or fully retired (absent from the list). */
+      struct panvk_kbase_jm_bag *target = NULL;
+      for (struct panvk_kbase_jm_bag *b = dev->async.bags_head; b;
+           b = b->next) {
+         if (b->seqno == seqno) {
+            target = b;
+            break;
+         }
+      }
+      if (!target && !dev->async.bag) {
          /* Nothing in flight but the sequence hasn't retired: it must
           * have completed through another path; treat as done. */
          simple_mtx_unlock(&dev->async.lock);
          return VK_SUCCESS;
+      }
+      if (target && target->done) {
+         simple_mtx_unlock(&dev->async.lock);
+         return dev->async.lost ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
       }
 
       int timeout_ms;
@@ -346,6 +453,8 @@ panvk_kbase_async_drain(struct panvk_device *dev)
       simple_mtx_lock(&dev->async.lock);
       if (dev->async.bag)
          seqno = dev->async.bag->seqno;
+      else if (dev->async.bags_tail)
+         seqno = dev->async.bags_tail->seqno;
       simple_mtx_unlock(&dev->async.lock);
       if (!seqno)
          break;
