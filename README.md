@@ -203,7 +203,28 @@ vkmark --winsys xcb -s 640x480
 
 **Measured on Mali-G57 MC2:** vkmark 640x480 immediate 78 → **222** (mailbox 68 → 194); 1280x720 immediate 31 → **164**; all runs exit `0`. glmark2/Zink: default path 59, async 84; AHB path needs `MESA_VK_WSI_PRESENT_MODE=mailbox` (Zink uses FIFO and AHB pixmaps get no completions, so FIFO locksteps at ~50 — mailbox sidesteps pacing entirely: glmark2 46 → **124**, async **128**, tradeoff is tearing). Binary md5 `127bc973…`. Full source: branch [`g57-ahb-wsi`](https://github.com/apexspan-svg/mesa-panvk-mali-g57/tree/g57-ahb-wsi).
 
-Also in this branch: `PANVK_FD_INTEROP=1` advertises dma-buf fd interop (`KHR_external_memory_fd`, `EXT_external_memory_dma_buf`, `EXT_image_drm_format_modifier`) backed by dma-heap/gralloc exportable allocations (export+import round-trip tested, zero mismatches). Semaphore/fence fd stays hidden — the kbase kernel interface cannot mint sync_files.
+Also in this branch: `PANVK_FD_INTEROP=1` advertises dma-buf fd interop (`KHR_external_memory_fd`, `EXT_external_memory_dma_buf`, `EXT_image_drm_format_modifier`) backed by dma-heap/gralloc exportable allocations (export+import round-trip tested, zero mismatches). Semaphore fd import/export works via kbase soft-fence atoms (see v1.2.0).
+
+### Async + overlap + fd-semaphore build (`v1.2.0`) *(Update)*
+
+The current tip adds pipelined tiler overlap (`PANVK_OVERLAP=1`, heap-split + cross-bag deps), `PANVK_TILER_HEAP_MB`, `SPILL_NOOPT` shader retry, and real semaphore fd import/export (`SOFT_FENCE_WAIT`/`TRIGGER` atoms against the kbase sync interface — verified cross-process, 10/10):
+
+```bash
+curl -LO https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/download/v1.2.0/panvk-mali-g57-v1.2.0-ahb.tar.gz
+tar -xzvf panvk-mali-g57-v1.2.0-ahb.tar.gz
+cd panvk-mali-g57-v1.2.0-ahb
+./install.sh
+```
+
+```bash
+export DISPLAY=:0
+export VK_ICD_FILENAMES=$PREFIX/share/vulkan/icd.d/panfrost_icd.aarch64.json
+export PANVK_NO_AFBC=1 PANVK_ASYNC=1 PANVK_OVERLAP=1
+export PANVK_AHB_WSI=1 PANVK_X11_EVENT_POLL=1
+vkmark --winsys xcb -s 640x480 -p immediate
+```
+
+**Measured on Mali-G57 MC2:** vkmark **248**, glmark2/Zink (mailbox) **132**, WebGL aquarium 500 fish **51.5 fps**; PPSSPP SuicideBarbie + AC Bloodlines render correctly; all runs exit `0`. Binary md5 `202044b4…`. Full source: branch [`g57-overlap-stage2`](https://github.com/apexspan-svg/mesa-panvk-mali-g57/tree/g57-overlap-stage2).
 
 ---
 
