@@ -338,6 +338,7 @@ This work builds directly on top of foundational research, forks, and patches fr
 * **[mexicanbr0auth/mesa-panvk-g57](https://github.com/mexicanbr0auth/mesa-panvk-g57):** Experimental snapshot and base branch for Mali-G57 kbase/JM bringup.
 * **[FristOneRR/FristOneRR-Panvk-Driver](https://github.com/FristOneRR/FristOneRR-Panvk-Driver)** (source: [FristOneRR-Admin/FristOneRR-Panvk-Source](https://github.com/FristOneRR-Admin/FristOneRR-Panvk-Source)): heap-split tiler overlap design (`PANVK_OVERLAP`), CPU sync_file import/export approach, `SPILL_NOOPT` shader retry, `TILER_HEAP_MB` tuning, and kbase version-compat notes — all ported/adapted here with gratitude.
 * **[Noysz/panvk-g99-jm](https://github.com/Noysz/panvk-g99-jm):** meticulous v9/JM bring-up research on the same Helio G99 silicon — kbase uAPI surface mapping (incl. `FENCE_VALIDATE`/`STREAM_CREATE`), job-header dependency decoding, and evidence-first methodology that guided our fence-interface probes.
+* **[BossDrk](https://github.com/0x8055/panvk-g52-oppo-a38) (0x8055/panvk-g52-oppo-a38):** G52/r49 kbase-compat research (atom-stride handling) informing our version-compat notes.
 * **[wonderkast02/panvk-g720-kbase-csf](https://github.com/wonderkast02/panvk-g720-kbase-csf):** Community discussions and reverse-engineering insights on Android Mali kbase interfaces.
 
 ---

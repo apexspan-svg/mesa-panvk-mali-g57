@@ -508,9 +508,17 @@ get_device_heaps(struct panvk_physical_device *device,
    int host_coherent_not_cached_idx = -1;
    int host_cached_not_coherent_idx = -1;
 
-   const uint64_t heap_size =
+   uint64_t heap_size =
       os_get_gpu_heap_size(instance->drirc.misc.heap_memory_percent,
                            &instance->drirc.misc.heap_memory_percent);
+
+   /* Cap for low-RAM phones (FristOneRR uses 25% of RAM by default):
+    * PANVK_HEAP_MB=<n> overrides the reported heap in megabytes. */
+   {
+      const char *e = getenv("PANVK_HEAP_MB");
+      if (e && atoi(e) >= 64 && atoi(e) <= 32768)
+         heap_size = (uint64_t)atoi(e) * 1024 * 1024;
+   }
 
    device->memory.heap_count = 1;
    device->memory.heaps[0] = (VkMemoryHeap){
