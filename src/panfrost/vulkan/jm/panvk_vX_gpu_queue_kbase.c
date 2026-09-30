@@ -870,6 +870,22 @@ panvk_overlap_enabled(void)
    return on != 0;
 }
 
+/* Submit-nowait (FristOneRR v51 model): route plain-async submits through
+ * the multi-bag builder with one strict linear chain across bags (no
+ * heap-half relaxation). Atoms stay fully ordered so the newest covers all
+ * earlier ones; the CPU never waits on the submit path. Requires
+ * PANVK_ASYNC=1; PANVK_OVERLAP=1 keeps the relaxed heap-half edges. */
+static bool
+panvk_nowait_enabled(void)
+{
+   static int on = -1;
+   if (on < 0) {
+      const char *e = getenv("PANVK_SUBMIT_NOWAIT");
+      on = (e && e[0] != '0') ? 1 : 0;
+   }
+   return on != 0;
+}
+
 /* Maximum batches merged into one job bag. Each batch contributes up to two
  * atoms; atom numbers are bytes and the wait path tracks 256 of them. */
 #define PANVK_KBASE_JM_MERGE_MAX_BATCHES 120
@@ -1127,12 +1143,20 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
    }
 
    /* Allocate ids and build. WAIT atoms for imported foreign fences go
-    * first so all work chains behind them. */
+    * first so all work chains behind them. In strict nowait mode the chain
+    * additionally starts from the previous bag's tail (validated below),
+    * giving one fully-ordered atom stream across submits. */
    unsigned nr_atoms = 0;
    uint8_t prev_atom = 0;
    uint8_t half_frag[2] = { 0, 0 };
    bool first_vtc = true;
    bool first_frag = true;
+   const bool strict = panvk_nowait_enabled() && !dev->async.overlap;
+   if (strict) {
+      uint8_t tail = dev->async.last_atom;
+      if (tail && dev->async.atom_bag[tail])
+         prev_atom = tail;
+   }
    for (unsigned k = 0; k < nr_wait_fds; k++) {
       struct base_jd_atom_v2 *a = &atoms[nr_atoms];
       memset(a, 0, sizeof(*a));
@@ -1194,9 +1218,11 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
             a->pre_dep[0].atom_id = prev_atom;
             a->pre_dep[0].dependency_type = 1; /* DATA */
          }
-         if (first_vtc && batch->frag_jc.first_job) {
+         if (first_vtc && batch->frag_jc.first_job && !strict) {
             /* Cross-bag edge: wait only for the in-flight fragment job
-             * that owns this batch's heap half (0 = none/stale). */
+             * that owns this batch's heap half (0 = none/stale). Skipped
+             * in strict mode: the linear prev_atom chain already covers
+             * every earlier atom. */
             uint8_t hid = dev->async.half_frag[batch->heap_half & 1];
             if (hid && !dev->async.atom_bag[hid])
                hid = 0;
@@ -1243,9 +1269,10 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
             a->pre_dep[0].atom_id = prev_atom;
             a->pre_dep[0].dependency_type = 1; /* DATA */
          }
-         if (first_frag) {
+         if (first_frag && !strict) {
             /* Cross-bag edge: fragment work stays serialized across bags
-             * (matches the reference design); vertex work is what overlaps. */
+             * (matches the reference design); vertex work is what overlaps.
+             * Skipped in strict mode for the same reason as above. */
             uint8_t fid = dev->async.last_frag;
             if (fid && !dev->async.atom_bag[fid])
                fid = 0;
@@ -1293,6 +1320,7 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
          bag->failed = false;
          bag->done = false;
          bag->next = NULL;
+         panvk_kbase_async_split_submit_locked(dev);
          if (dev->async.bags_tail)
             dev->async.bags_tail->next = bag;
          else
@@ -1360,10 +1388,11 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
          dev->async.bags_tail = NULL;
       if (head->seqno > dev->async.completed_seqno)
          dev->async.completed_seqno = head->seqno;
-      retired[nr_retired++] = head;
-   }
-   simple_mtx_unlock(&dev->async.lock);
-   panvk_kbase_async_retire_bags(retired, nr_retired);
+       retired[nr_retired++] = head;
+    }
+    panvk_kbase_async_split_drain_locked(dev);
+    simple_mtx_unlock(&dev->async.lock);
+    panvk_kbase_async_retire_bags(retired, nr_retired);
 
    if (bag) {
       /* ioctl failed: release the reserved ids. */
@@ -1457,6 +1486,7 @@ panvk_kbase_jm_submit_trigger(struct panvk_device *dev, uint8_t dep_atom,
       bag->failed = false;
       bag->done = false;
       bag->next = NULL;
+      panvk_kbase_async_split_submit_locked(dev);
       dev->async.atom_bag[id] = bag;
       dev->async.last_atom = id;
       if (dev->async.bags_tail)
@@ -1569,6 +1599,9 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
    uint64_t targets[PANVK_KBASE_SYNC_TARGET_COUNT] = {};
    uint64_t async_seqno = 0;
    const bool want_async = panvk_kbase_async_is_enabled(dev);
+   /* Frame-split: submit-path CPU time (single-threaded benchmarks only;
+    * plain adds, no atomics). */
+   const uint64_t split_t0 = dev->async.split_on ? os_time_get_nano() : 0;
 
    if (unlikely(getenv("PANVK_VERBOSE")))
       fprintf(stderr, "PANVKDBG kbase submit: wait=%u signal=%u cmdbuf=%u\n",
@@ -1586,6 +1619,10 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
       if (result != VK_SUCCESS)
          return result;
    }
+   /* Frame-split: restart the clock after semaphore waits so submit CPU
+    * measures driver work (prep+submit), not present pacing. */
+   const uint64_t split_t1 =
+      dev->async.split_on ? os_time_get_nano() : 0;
 
     pan_kmod_flush_bo_map_syncs(dev->kmod.dev);
 
@@ -1627,7 +1664,8 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
            * first overlap chunk; other paths keep their CPU waits. */
           int *wait_fds = NULL;
           unsigned nr_wait_fds = 0;
-          if (dev->async.overlap && submit->wait_count) {
+          if ((dev->async.overlap || panvk_nowait_enabled()) &&
+              submit->wait_count) {
              wait_fds = malloc(sizeof(*wait_fds) * submit->wait_count);
              if (wait_fds) {
                 for (uint32_t w = 0; w < submit->wait_count; w++) {
@@ -1645,9 +1683,11 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
           for (unsigned off = 0; off < filled && mres == VK_SUCCESS;) {
              unsigned n =
                 MIN2(filled - off, (unsigned)PANVK_KBASE_JM_MERGE_MAX_BATCHES);
-             if (dev->async.overlap) {
-                /* Pipelined overlap submit (builds + submits under the
-                 * engine lock). */
+             if (dev->async.overlap || panvk_nowait_enabled()) {
+                /* Pipelined multi-bag submit (builds + submits under the
+                 * engine lock). With PANVK_SUBMIT_NOWAIT=1 (and overlap off)
+                 * this is the strict linear-chain variant: same machinery,
+                 * no heap-half relaxation. */
                 uint64_t seqno = panvk_kbase_jm_submit_overlap(
                    dev, &preps[off], n, wait_fds, nr_wait_fds);
                 free(wait_fds);
@@ -1747,6 +1787,13 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
          panvk_kbase_sync_set_pending(submit->signals[i].sync, queue,
                                       panvk_jm_kbase_wait_done, targets);
       }
+   }
+
+   if (dev->async.split_on) {
+      dev->async.split_submit_cpu_ns += os_time_get_nano() - split_t1;
+      dev->async.split_wait_ns += split_t1 - split_t0;
+      if (++dev->async.split_submits % 300 == 0)
+         panvk_kbase_async_split_report(dev, "submit");
    }
 
    return VK_SUCCESS;

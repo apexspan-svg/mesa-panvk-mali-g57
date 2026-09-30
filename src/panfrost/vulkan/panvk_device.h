@@ -172,6 +172,16 @@ struct panvk_device {
       /* Debug counters (overlap mode). */
       uint64_t dbg_submits;
       unsigned dbg_max_inflight;
+      /* Frame-split instrumentation (PANVK_FRAME_SPLIT=1): GPU-busy vs
+       * CPU-idle split. idle accumulates wall time with zero bags in
+       * flight; submit_cpu accumulates kbase_jm_submit CPU time. */
+      bool split_on;
+      uint64_t split_idle_ns;
+      uint64_t split_idle_since;
+      uint64_t split_wall_start;
+      uint64_t split_submit_cpu_ns;
+      uint64_t split_wait_ns;
+      uint64_t split_submits;
    } async;
 };
 
@@ -246,6 +256,17 @@ uint64_t panvk_kbase_jm_submit_trigger(struct panvk_device *dev,
 
 /* True if any bag is currently in flight (nonblocking check). */
 bool panvk_kbase_async_busy(struct panvk_device *dev);
+
+/* Frame-split report (PANVK_FRAME_SPLIT=1): GPU-busy% and submit CPU.
+ * No-op unless the env knob is set. */
+void panvk_kbase_async_split_report(struct panvk_device *dev,
+                                    const char *tag);
+
+/* Frame-split transitions. Call with async.lock held: submit closes the
+ * idle window when the engine was empty; drain opens one when it empties.
+ * No-ops unless PANVK_FRAME_SPLIT=1. */
+void panvk_kbase_async_split_submit_locked(struct panvk_device *dev);
+void panvk_kbase_async_split_drain_locked(struct panvk_device *dev);
 
 /* Drain only if busy; otherwise return immediately. For free paths that must
  * not stall when the GPU is idle. */

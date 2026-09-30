@@ -392,11 +392,23 @@ panvk_image_get_mod(struct panvk_image *image,
     * The sw_device WSI path must be able to consume the image through the
     * CPU/software presentation path.  Do not let modifier selection choose
     * AFBC while testing that path.
+    *
+    * PANVK_WSI_AFBC=1 (requires PANVK_AHB_WSI=1, i.e. the GPU-blit present
+    * path) lifts the WSI LINEAR force: swapchain images may select AFBC
+    * and the present blit decompresses on the way to the linear AHB
+    * buffer. Never enable on the sw_device/CPU present path.
     */
    if (iusage.wsi || getenv("PANVK_NO_AFBC")) {
-      fprintf(stderr,
-              "PANVKDBG WSI/NO_AFBC image: forcing LINEAR modifier\n");
-      return DRM_FORMAT_MOD_LINEAR;
+      const char *wsi_afbc = getenv("PANVK_WSI_AFBC");
+      const char *ahb_wsi = getenv("PANVK_AHB_WSI");
+      if (!(iusage.wsi && wsi_afbc && wsi_afbc[0] != '0' && ahb_wsi &&
+            ahb_wsi[0] != '0')) {
+         if (iusage.wsi) {
+            fprintf(stderr,
+                    "PANVKDBG WSI/NO_AFBC image: forcing LINEAR modifier\n");
+         }
+         return DRM_FORMAT_MOD_LINEAR;
+      }
    }
 
    /* Without external dependencies, pick the best modifier that supports the image. */
