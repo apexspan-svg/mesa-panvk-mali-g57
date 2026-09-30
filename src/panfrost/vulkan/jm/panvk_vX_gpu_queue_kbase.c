@@ -1320,6 +1320,7 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
          bag->failed = false;
          bag->done = false;
          bag->next = NULL;
+         panvk_kbase_async_split_submit_locked(dev);
          if (dev->async.bags_tail)
             dev->async.bags_tail->next = bag;
          else
@@ -1387,10 +1388,11 @@ panvk_kbase_jm_submit_overlap(struct panvk_device *dev,
          dev->async.bags_tail = NULL;
       if (head->seqno > dev->async.completed_seqno)
          dev->async.completed_seqno = head->seqno;
-      retired[nr_retired++] = head;
-   }
-   simple_mtx_unlock(&dev->async.lock);
-   panvk_kbase_async_retire_bags(retired, nr_retired);
+       retired[nr_retired++] = head;
+    }
+    panvk_kbase_async_split_drain_locked(dev);
+    simple_mtx_unlock(&dev->async.lock);
+    panvk_kbase_async_retire_bags(retired, nr_retired);
 
    if (bag) {
       /* ioctl failed: release the reserved ids. */
@@ -1484,6 +1486,7 @@ panvk_kbase_jm_submit_trigger(struct panvk_device *dev, uint8_t dep_atom,
       bag->failed = false;
       bag->done = false;
       bag->next = NULL;
+      panvk_kbase_async_split_submit_locked(dev);
       dev->async.atom_bag[id] = bag;
       dev->async.last_atom = id;
       if (dev->async.bags_tail)
@@ -1596,6 +1599,9 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
    uint64_t targets[PANVK_KBASE_SYNC_TARGET_COUNT] = {};
    uint64_t async_seqno = 0;
    const bool want_async = panvk_kbase_async_is_enabled(dev);
+   /* Frame-split: submit-path CPU time (single-threaded benchmarks only;
+    * plain adds, no atomics). */
+   const uint64_t split_t0 = dev->async.split_on ? os_time_get_nano() : 0;
 
    if (unlikely(getenv("PANVK_VERBOSE")))
       fprintf(stderr, "PANVKDBG kbase submit: wait=%u signal=%u cmdbuf=%u\n",
@@ -1613,6 +1619,10 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
       if (result != VK_SUCCESS)
          return result;
    }
+   /* Frame-split: restart the clock after semaphore waits so submit CPU
+    * measures driver work (prep+submit), not present pacing. */
+   const uint64_t split_t1 =
+      dev->async.split_on ? os_time_get_nano() : 0;
 
     pan_kmod_flush_bo_map_syncs(dev->kmod.dev);
 
@@ -1777,6 +1787,13 @@ panvk_per_arch(kbase_jm_submit)(struct vk_queue *vk_queue,
          panvk_kbase_sync_set_pending(submit->signals[i].sync, queue,
                                       panvk_jm_kbase_wait_done, targets);
       }
+   }
+
+   if (dev->async.split_on) {
+      dev->async.split_submit_cpu_ns += os_time_get_nano() - split_t1;
+      dev->async.split_wait_ns += split_t1 - split_t0;
+      if (++dev->async.split_submits % 300 == 0)
+         panvk_kbase_async_split_report(dev, "submit");
    }
 
    return VK_SUCCESS;

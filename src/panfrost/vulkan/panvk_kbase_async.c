@@ -108,6 +108,65 @@ panvk_kbase_async_init(struct panvk_device *dev)
    dev->async.last_frag = 0;
    dev->async.last_atom = 0;
    dev->async.fence_stream = -1;
+   dev->async.split_on = getenv("PANVK_FRAME_SPLIT") != NULL;
+   dev->async.split_idle_ns = 0;
+   dev->async.split_wall_start = os_time_get_nano();
+   /* Start idle: first submit closes the initial idle window. */
+   dev->async.split_idle_since = dev->async.split_wall_start;
+   dev->async.split_submit_cpu_ns = 0;
+   dev->async.split_wait_ns = 0;
+   dev->async.split_submits = 0;
+}
+
+/* Frame-split helpers. Call with async.lock held. On submit: close the
+ * idle window if the engine was empty. On reap/retire advance: open a new
+ * idle window when the engine just drained. */
+void
+panvk_kbase_async_split_submit_locked(struct panvk_device *dev)
+{
+   if (!dev->async.split_on)
+      return;
+   if (!dev->async.bag && !dev->async.bags_head &&
+       dev->async.split_idle_since) {
+      dev->async.split_idle_ns +=
+         os_time_get_nano() - dev->async.split_idle_since;
+      dev->async.split_idle_since = 0;
+   }
+}
+
+void
+panvk_kbase_async_split_drain_locked(struct panvk_device *dev)
+{
+   if (!dev->async.split_on)
+      return;
+   if (!dev->async.bag && !dev->async.bags_head &&
+       !dev->async.split_idle_since)
+      dev->async.split_idle_since = os_time_get_nano();
+}
+
+void
+panvk_kbase_async_split_report(struct panvk_device *dev, const char *tag)
+{
+   if (!dev->async.split_on)
+      return;
+   simple_mtx_lock(&dev->async.lock);
+   uint64_t now = os_time_get_nano();
+   uint64_t idle = dev->async.split_idle_ns;
+   if (dev->async.split_idle_since)
+      idle += now - dev->async.split_idle_since;
+   uint64_t wall = now - dev->async.split_wall_start;
+   double busy = wall ? 100.0 * (double)(wall - idle) / (double)wall : 0.0;
+   double avg_us = dev->async.split_submits ?
+      (double)dev->async.split_submit_cpu_ns /
+      (double)dev->async.split_submits / 1000.0 : 0.0;
+   double avg_wait_us = dev->async.split_submits ?
+      (double)dev->async.split_wait_ns /
+      (double)dev->async.split_submits / 1000.0 : 0.0;
+   fprintf(stderr,
+           "PANVKDBG split[%s]: busy=%.1f%% submits=%llu avg_cpu=%.1fus avg_semwait=%.1fus\n",
+           tag, busy, (unsigned long long)dev->async.split_submits,
+           avg_us, avg_wait_us);
+   simple_mtx_unlock(&dev->async.lock);
 }
 
 void
@@ -277,10 +336,11 @@ async_reap_locked(struct panvk_device *dev,
 
 void
 panvk_kbase_async_reap_locked(struct panvk_device *dev,
-                              struct panvk_kbase_jm_bag **retired,
-                              unsigned *nr_retired)
+                               struct panvk_kbase_jm_bag **retired,
+                               unsigned *nr_retired)
 {
    async_reap_locked(dev, retired, nr_retired);
+   panvk_kbase_async_split_drain_locked(dev);
 }
 
 void
@@ -386,6 +446,7 @@ panvk_kbase_async_submit(struct panvk_device *dev, void *atoms,
    bag->extres_blob = extres_blob;
    bag->pending = nr_atoms;
    bag->failed = false;
+   panvk_kbase_async_split_submit_locked(dev);
    dev->async.bag = bag;
    uint64_t seqno = bag->seqno;
    simple_mtx_unlock(&dev->async.lock);
